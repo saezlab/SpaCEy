@@ -120,7 +120,7 @@ class trainer_tester:
             train_sampler = torch.utils.data.SubsetRandomSampler(list(range(len(self.dataset))))
             train_loader = DataLoader(self.dataset, batch_size=self.parser_args.bs, shuffle=True)
             validation_loader, test_loader = None, None
-            if self.parser_args.model == "PNAConv" or "MMAConv" or "GMNConv":
+            if self.parser_args.model in ["PNAConv", "MMAConv", "GMNConv"]:
                     deg = self.calculate_deg(train_sampler)
 
             model = self.set_model(deg)
@@ -169,7 +169,7 @@ class trainer_tester:
 
                 self.parser_args.fold_img_id_dict[f"fold_{fold}"] = [train_img_ids, val_img_ids]
 
-                if self.parser_args.model == "PNAConv" or "MMAConv" or "GMNConv":
+                if self.parser_args.model in ["PNAConv", "MMAConv", "GMNConv"]:
                     deg = self.calculate_deg(train_sampler)
                 
                 model = self.set_model(deg)
@@ -393,9 +393,8 @@ class trainer_tester:
 
             
                 fold_dict["scheduler"].step(validation_loss)
-                # print(epoch_val_score)
-                early_stopping(validation_loss, epoch_val_score, fold_dict["model"], vars(self.parser_args), id_file_name=self.setup_args.id, deg=self.fold_dicts[0]["deg"] if self.parser_args.model == "PNAConv" else None)
                 
+                early_stopping(validation_loss, epoch_val_score, fold_dict["model"], vars(self.parser_args), id_file_name=self.setup_args.id, deg=self.fold_dicts[0]["deg"] if self.parser_args.model in ["PNAConv", "MMAConv", "GMNConv"] else None)
                 # pbar.set_description(f"Train loss: {train_loss:.2f} Val. loss: {validation_loss:.2f} Val c_index: {epoch_val_ci_score} Patience: {early_stopping.counter}")
                 pbar.set_description(f"Train loss: {train_loss:.2f} Val. loss: {validation_loss:.2f} Best val. score: {early_stopping.best_eval_score} Patience: {early_stopping.counter}")
 
@@ -405,14 +404,14 @@ class trainer_tester:
                     fold_val_scores.append(early_stopping.best_eval_score)
                     print("Early stopping the training...")
                     break
-            break
 
         average_val_scores = sum(fold_val_scores)/len(fold_val_scores)
-        if average_val_scores > 0.66:
+        print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
+        if average_val_scores > 0.65:
             self.parser_args.ci_score = average_val_scores
             self.parser_args.fold_ci_scores = fold_val_scores
             custom_tools.save_dict_as_json(vars(self.parser_args), self.setup_args.id, self.setup_args.MODEL_PATH)
-            print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
+            # print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
             box_plt = sns.boxplot(data=fold_val_scores)
             fig = box_plt.get_figure()
             fig.savefig(os.path.join(self.setup_args.PLOT_PATH, f"{self.setup_args.id}.png"))
