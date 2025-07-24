@@ -44,8 +44,7 @@ class CustomGCN(torch.nn.Module):
 
         # Prediction type
         # TODO: Refactor this
-        self.label_type = "regression"
-        # self.label_type = self.pars["label_type"]
+        self.label_type = self.pars.get("label_type", "regression")
 
 
         if self.label_type == "regression":

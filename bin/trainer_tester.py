@@ -1,5 +1,5 @@
 from cProfile import label
-from sklearn.metrics import accuracy_score, f1_score, precision_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, roc_auc_score
 import torch
 from model import CustomGCN
 from dataset import TissueDataset, LungDataset
@@ -70,12 +70,12 @@ class trainer_tester:
         each fold, saves them under the 'folds_dict' dictionary
         """
         if self.parser_args.dataset_name == "Lung":
-            self.dataset = LungDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}"), "Relapse")
+            self.dataset = LungDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}"), self.parser_args.label)
             # RAW_DATA_PATH = os.path.join("../data", f"{dataset_name}/raw")
             #dataset = LungDataset(f"../data/{dataset_name}",  "Relapse")
         else:
             self.dataset = TissueDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}", self.parser_args.unit),  self.parser_args.unit)
-        # dataset = TissueDataset(os.path.join("../data/JacksonFischer/month"), "month")
+
 
         print("Number of samples:", len(self.dataset), self.parser_args.dataset_name,  self.parser_args.label)
 
@@ -83,17 +83,30 @@ class trainer_tester:
             self.label_type = "regression"
             self.num_classes = 1
 
-        elif self.parser_args.label == "treatment":
+        elif self.parser_args.label == "tumor_grade":
             self.label_type = "classification"
-            self.setup_args.criterion = torch.nn.CrossEntropyLoss()
-            self.dataset.data.y = self.dataset.data.clinical_type
-            self.unique_classes = set(self.dataset.data.clinical_type)
-            self.num_classes = len(self.unique_classes)
+            tumor_grade_raw = self.dataset.data.y
+            tumor_grade_tensor = torch.tensor(tumor_grade_raw) if not isinstance(tumor_grade_raw, torch.Tensor) else tumor_grade_raw
+            self.num_classes = int(tumor_grade_tensor.max().item()) + 1
+            
+            class_counts = torch.bincount(tumor_grade_tensor.long(), minlength=self.num_classes)
+            # Avoid division by zero: set zero counts to 1 for weight calculation, then set their weight to 0
+            safe_class_counts = class_counts.clone()
+            safe_class_counts[safe_class_counts == 0] = 1
+            class_weights = 1.0 / safe_class_counts.float()
+            class_weights[class_counts == 0] = 0.0
+            class_weights = class_weights[:self.num_classes]
+            class_weights = class_weights / class_weights.sum() * len(class_weights)
+            if isinstance(class_weights, torch.Tensor):
+                class_weights = class_weights.to(self.device)
+            self.setup_args.criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
+            self.dataset.data.y = tumor_grade_tensor
+            self.uniq_tumor_grades = sorted(list(set(tumor_grade_tensor.tolist())))
+            print("Number of classes:", self.num_classes)
 
-
-        # WARN CURRENTLY DOESN'T PULL THE DATA NOT WORKING
         elif self.parser_args.label == "DiseaseStage":
             self.label_type = "classification"
+            # Only set class_weights if defined for DiseaseStage
             self.setup_args.criterion = torch.nn.CrossEntropyLoss()
 
         elif self.parser_args.label == "Relapse":
@@ -106,10 +119,6 @@ class trainer_tester:
             self.num_classes = 1
 
         self.label_data = self.dataset.data.y
-        if self.label_type=="classification":
-            self.LT_ToIndex, self.LT_FromIndex = custom_tools.extract_LT(self.dataset.data.y)
-            self.dataset.data.y = custom_tools.convert_wLT(self.dataset.data.y,self.LT_ToIndex)
-
         self.dataset = self.dataset.shuffle()
 
         self.fold_dicts = []
@@ -247,22 +256,49 @@ class trainer_tester:
         # print(fold_dict["model"])
         for data in fold_dict["train_loader"]:  # Iterate in batches over the training dataset.
 
-            out = fold_dict["model"](data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device)).type(torch.DoubleTensor).to(self.device) # Perform a single forward pass.
+            out = fold_dict["model"](data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device)).float().to(self.device) # Perform a single forward pass.
             # print("Out shape", out.shape, torch.sigmoid(out), data.y)
             loss = None
             if self.parser_args.loss == "CoxPHLoss":#  or self.parser_args.loss == "NegativeLogLikelihood":
                 loss = self.setup_args.criterion(out, data.y.to(self.device), data.is_censored.to(self.device))  # Compute the loss.    
             else:
-                # print("Loss", data.y, out.squeeze(), out.shape)
-                loss = self.setup_args.criterion(out.squeeze(), data.y.to(self.device)) # .to(self.device))  # Compute the loss.
+                target = data.y
+                if self.label_type == "classification":
+                    target = data.y.long()
+                    if target.dim() > 1:
+                        target = target.view(-1)
+                    # print("Batch labels:", target.tolist())
+                    # print("Batch label min/max:", target.min().item(), target.max().item())
+                    # print("Model output shape:", out.shape)
+                    # Do NOT squeeze the output for classification
+                    loss = self.setup_args.criterion(out, target.to(self.device))
+                else:
+                    # For regression, squeeze output and target
+                    loss = self.setup_args.criterion(out.squeeze(), data.y.to(self.device))
                 # print("Loss", loss, loss.item(), data.y.to(self.device), out.squeeze(), out)
             
             loss.backward()  # Derive gradients.
             
-            pred_list.extend([val.item() for val in out.squeeze()])
+            if self.label_type == "classification":
+                preds = out.argmax(dim=1)
+                pred_list.extend(preds.cpu().numpy().tolist())
+            else:
+                pred_list.extend([val.item() for val in out.squeeze()])
             total_loss += float(loss.item())
             fold_dict["optimizer"].step()  # Update parameters based on gradients.
             fold_dict["optimizer"].zero_grad()  # Clear gradients
+
+            # Print mean absolute gradient for all parameters after backward
+            total_grad = 0.0
+            n_params = 0
+            for name, param in fold_dict["model"].named_parameters():
+                if param.grad is not None:
+                    grad_abs = param.grad.abs().mean().item()
+                    print(f"[Grad] {name}: mean abs grad = {grad_abs}")
+                    total_grad += grad_abs
+                    n_params += 1
+            if n_params > 0:
+                print(f"[Grad] Mean abs grad across all params: {total_grad / n_params}")
 
         return total_loss
 
@@ -288,33 +324,42 @@ class trainer_tester:
         
         for data in loader:  # Iterate in batches over the training/test dataset.
             if data.y.shape[0]>1:
-                out = model(data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device)).type(torch.DoubleTensor).to(self.device) # Perform a single forward pass.
+                out = model(data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device)).float().to(self.device) # Perform a single forward pass.
 
                 loss = None
                 if self.parser_args.loss == "CoxPHLoss":#  or self.parser_args.loss=="NegativeLogLikelihood":
                     loss = self.setup_args.criterion(out, data.y.to(self.device), data.is_censored.to(self.device))  # Compute the loss.    
                 else:
-                    # print("Classification loss")
-                    # print(out.squeeze(),  data.y.to(self.device))
-                    loss = self.setup_args.criterion(out.squeeze(), data.y.to(self.device))  # Compute the loss.
-
+                    if self.label_type == "classification":
+                        preds = out.argmax(dim=1)
+                        pred_list.extend(preds.cpu().numpy().tolist())
+                        true_list.extend(data.y.cpu().numpy().tolist())
+                        loss = self.setup_args.criterion(out, data.y.long().to(self.device))
+                        # Collect probabilities for AUC
+                        if out.shape[1] == 1:
+                            # Binary classification
+                            probs = torch.sigmoid(out).detach().cpu().numpy().flatten()
+                            if not hasattr(self, 'train_probabilities'):
+                                self.train_probabilities = []
+                            self.train_probabilities.extend(probs.tolist())
+                        else:
+                            # Multi-class classification
+                            probs = torch.softmax(out, dim=1).detach().cpu().numpy()
+                            for i in range(out.shape[1]):
+                                col_name = str(i)
+                                if col_name not in locals():
+                                    locals()[col_name] = []
+                                if not hasattr(self, 'train_probabilities'):
+                                    self.train_probabilities = []
+                            if not hasattr(self, 'train_prob_matrix'):
+                                self.train_prob_matrix = []
+                            self.train_prob_matrix.extend(probs.tolist())
+                    else:
+                        loss = self.setup_args.criterion(out.squeeze(), data.y.to(self.device))  # Compute the loss.
+                        true_list.extend([round(val.item(),6) for val in data.y])
+                        pred_list.extend([val.item() for val in out.squeeze()])
                 total_loss += float(loss.item())
 
-                true_list.extend([round(val.item(),6) for val in data.y])
-                # WARN Correct usage of "max" ?
-                if self.parser_args.loss == "CoxPHLoss":# == "regression":
-                    pred_list.extend([val.item() for val in out.squeeze()])
-                else:
-                    probs = torch.sigmoid(out)
-                    preds = (probs >= 0.5).float()
-                    # print("preds, data.y", preds.squeeze(), data.y)
-                    correct = (np.array(preds.squeeze().cpu()) == np.array(data.y)).sum()
-                    # accuracy = correct / data.y.size(0)
-                    # print("Accuracy", accuracy)
-                    pred_list.extend([val for val in preds])
-                
-                #pred_list.extend([val.item() for val in data.y])
-                # print(self.parser_args.dataset_name)
                 if return_pred_df and self.parser_args.loss == "CoxPHLoss":
                     tumor_grade_list.extend([val for val in data.tumor_grade])
                     clinical_type_list.extend([val for val in data.clinical_type])
@@ -351,7 +396,20 @@ class trainer_tester:
             else:
                 df = pd.DataFrame(list(zip(pid_list, img_list, true_list, pred_list, tumor_grade_list, clinical_type_list, osmonth_list,  label_list)),
                 columns =["Patient ID","Image Number", 'True Value', 'Predicted', "Tumor Grade", "Clinical Type", "OS Month", "Fold#-Set"])
-            
+                # Add probabilities for AUC
+                if self.label_type == "classification":
+                    if hasattr(self, 'train_probabilities'):
+                        if self.num_classes == 1 or self.num_classes == 2:
+                            # Binary classification
+                            df['Probabilities'] = self.train_probabilities[:len(df)]
+                            self.train_probabilities = self.train_probabilities[len(df):]
+                        else:
+                            # Multi-class classification
+                            if hasattr(self, 'train_prob_matrix'):
+                                prob_matrix = np.array(self.train_prob_matrix[:len(df)])
+                                for i in range(prob_matrix.shape[1]):
+                                    df[str(i)] = prob_matrix[:, i]
+                                self.train_prob_matrix = self.train_prob_matrix[len(df):]
             return total_loss, df
         else:
             return total_loss
@@ -363,9 +421,17 @@ class trainer_tester:
         self.results =[] 
         # collect train/val/test predictions of all folds in all_preds_df
         fold_val_scores = []
+        fold_results = []  # To store per-fold metrics
 
         # print(self.fold_dicts)
         for fold_dict in self.fold_dicts:
+            # Print label distribution and unique values of y at the start of training (once per fold)
+            if self.label_type == "classification":
+                
+                y_tensor = self.dataset.data.y if isinstance(self.dataset.data.y, torch.Tensor) else torch.tensor(self.dataset.data.y)
+                unique, counts = torch.unique(y_tensor, return_counts=True)
+                # print(f"[Zero-indexed] Label distribution for {self.parser_args.label}: {dict(zip(unique.tolist(), counts.tolist()))}")
+                # print(f"[Zero-indexed] Unique values in y: {unique.tolist()}")
             # print(fold_dict["model"])
             best_val_loss = np.inf
             early_stopping = EarlyStopping(patience=self.parser_args.patience*2, verbose=True, model_path=self.setup_args.MODEL_PATH)
@@ -374,22 +440,49 @@ class trainer_tester:
             for epoch in (pbar := tqdm(range(self.parser_args.epoch), disable=False)):
 
                 self.train(fold_dict)
+                # Print label distribution at the start of training
+                # if self.label_type == "classification" and hasattr(self.dataset.data, self.parser_args.label):
+                #     label_tensor = torch.tensor(getattr(self.dataset.data, self.parser_args.label))
+                #     unique, counts = torch.unique(label_tensor, return_counts=True)
+                #     print(f"Label distribution for {self.parser_args.label}: {dict(zip(unique.tolist(), counts.tolist()))}")
+                # Print model outputs and predictions for the first batch of validation set
+                model = fold_dict["model"]
+                model.eval()
+                with torch.no_grad():
+                    for i, data in enumerate(fold_dict["validation_loader"]):
+                        out = model(data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device))
+                        break
                 train_loss = self.test(fold_dict["model"], fold_dict["train_loader"],  fold_dict["fold"])
                 validation_loss, df_epoch_val = self.test(fold_dict["model"], fold_dict["validation_loader"],  fold_dict["fold"], "validation", self.setup_args.plot_result)
                 # test_loss, df_epoch_test = self.test(fold_dict["model"], fold_dict["test_loader"],  fold_dict["fold"], "test", self.setup_args.plot_result)
-                epoch_val_score = 0.0   
+                epoch_val_score = 0.0
+                auc_score = None
                 if self.parser_args.loss == "CoxPHLoss":
                     epoch_val_score = concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"]) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"])
                 else:
-                    
                     correct = (df_epoch_val['True Value'] == df_epoch_val['Predicted']).sum()
-                    # print((df_epoch_val['True Value'][:10] == df_epoch_val['Predicted'][:10]))
-                    # print(df_epoch_val['True Value'][:10], df_epoch_val['Predicted'][:10])
-                    # print("correct, len(df_epoch_val)", correct, len(df_epoch_val))
-                    # print(df_epoch_val['True Value'])
-                    # print(df_epoch_val['Predicted'])
-                    epoch_val_score = correct / len(df_epoch_val)
-                    # print("Accuracy", accuracy)
+                    accuracy = correct / len(df_epoch_val)
+                    # --- AUC Calculation ---
+                    if self.label_type == "classification":
+                        if self.num_classes == 2 or self.num_classes == 1:
+                            # Binary classification
+                            y_true = df_epoch_val["True Value"].values
+                            y_score = df_epoch_val["Probabilities"].values if "Probabilities" in df_epoch_val else None
+                            if y_score is None and hasattr(self, 'train_probabilities'):
+                                y_score = self.train_probabilities
+                            auc_score = roc_auc_score(y_true, y_score)
+                        else:
+                            # Multi-class classification
+                            y_true = df_epoch_val["True Value"].values
+                            y_score = df_epoch_val[[str(i) for i in range(self.num_classes)]].values if all(str(i) in df_epoch_val.columns for i in range(self.num_classes)) else None
+                            if y_score is not None:
+                                auc_score = roc_auc_score(y_true, y_score, multi_class='ovr', average='macro')
+                            else:
+                                auc_score = None
+                    epoch_val_score = auc_score
+                # Print per-epoch metrics
+                if self.label_type == "classification":
+                    print(f"Epoch {epoch} | Fold {fold_dict['fold']} | Val Loss: {validation_loss:.4f} | Val AUC: {epoch_val_score:.4f} | Val Acc: {accuracy:.4f}")
 
             
                 fold_dict["scheduler"].step(validation_loss)
@@ -399,6 +492,17 @@ class trainer_tester:
                 pbar.set_description(f"Train loss: {train_loss:.2f} Val. loss: {validation_loss:.2f} Best val. score: {early_stopping.best_eval_score} Patience: {early_stopping.counter}")
 
                 if early_stopping.early_stop or epoch==self.parser_args.epoch-1:
+                    # Save best metrics for this fold
+                    best_fold_loss = early_stopping.val_loss_min
+                    best_fold_score = early_stopping.best_eval_score
+                    # Try to get best AUC for this fold (last epoch's AUC)
+                    best_fold_auc = auc_score if 'auc_score' in locals() else None
+                    fold_results.append([
+                        fold_dict['fold'],
+                        best_fold_loss,
+                        best_fold_score,
+                        best_fold_auc
+                    ])
                     print("Best model lr:", fold_dict["optimizer"].param_groups[0]["lr"])
                     self.parser_args.best_epoch = epoch
                     fold_val_scores.append(early_stopping.best_eval_score)
@@ -407,14 +511,32 @@ class trainer_tester:
 
         average_val_scores = sum(fold_val_scores)/len(fold_val_scores)
         print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
-        if average_val_scores > 0.65:
-            self.parser_args.ci_score = average_val_scores
-            self.parser_args.fold_ci_scores = fold_val_scores
-            custom_tools.save_dict_as_json(vars(self.parser_args), self.setup_args.id, self.setup_args.MODEL_PATH)
-            # print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
-            box_plt = sns.boxplot(data=fold_val_scores)
-            fig = box_plt.get_figure()
-            fig.savefig(os.path.join(self.setup_args.PLOT_PATH, f"{self.setup_args.id}.png"))
+        # if average_val_scores > 0.65:
+        self.parser_args.ci_score = average_val_scores
+        self.parser_args.fold_ci_scores = fold_val_scores
+        custom_tools.save_dict_as_json(vars(self.parser_args), self.setup_args.id, self.setup_args.MODEL_PATH)
+        # print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
+        box_plt = sns.boxplot(data=fold_val_scores)
+        fig = box_plt.get_figure()
+        fig.savefig(os.path.join(self.setup_args.PLOT_PATH, f"{self.setup_args.id}.png"))
+        # Save per-fold results to CSV
+        with open(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_per_fold_results.csv"), 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Fold", "Best Val Loss", "Best Val Accuracy", "Best Val AUC"])
+            writer.writerows(fold_results)
+        # Plot per-fold best AUCs as a boxplot
+        
+        import matplotlib.pyplot as plt
+        aucs = [row[3] for row in fold_results if row[3] is not None]
+        if len(aucs) > 0:
+            plt.figure(figsize=(8, 5))
+            plt.boxplot(aucs)
+            plt.title('Per-Fold Best Validation AUC')
+            plt.ylabel('AUC')
+            plt.xlabel('Fold')
+            plt.savefig(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_per_fold_auc.png"))
+            plt.close()
+        
     
     
     def full_train_loop(self):
@@ -455,6 +577,24 @@ class trainer_tester:
             accuracy_Score = accuracy_score(df_train["True Value"], df_train['Predicted'])
             precision_Score = precision_score(df_train["True Value"], df_train['Predicted'],average="micro")   
             f1_Score = f1_score(df_train["True Value"], df_train['Predicted'],average="micro")    
+            # --- AUC Calculation ---
+            if self.label_type == "classification":
+                if self.num_classes == 2 or self.num_classes == 1:
+                    # Binary classification
+                    y_true = df_train["True Value"].values
+                    y_score = df_train["Probabilities"].values if "Probabilities" in df_train else None
+                    if y_score is None and hasattr(self, 'train_probabilities'):
+                        y_score = self.train_probabilities
+                    auc_score = roc_auc_score(y_true, y_score)
+                else:
+                    # Multi-class classification
+                    y_true = df_train["True Value"].values
+                    y_score = df_train[[str(i) for i in range(self.num_classes)]].values if all(str(i) in df_train.columns for i in range(self.num_classes)) else None
+                    if y_score is not None:
+                        auc_score = roc_auc_score(y_true, y_score, multi_class='ovr', average='macro')
+                    else:
+                        auc_score = None
+            print(f"AUC: {auc_score}")
 
         all_preds_df = df_train
         
@@ -570,8 +710,8 @@ class trainer_tester:
             writer.writerows(variances)
 
 
-    # python train_test_controller.py --model PNAConv --lr 0.001 --bs 32 --dropout 0.0 --epoch 1000 --num_of_gcn_layers 2 --num_of_ff_layers 1 --gcn_h 128 --fcl 256 --en best_n_fold_17-11-2022 --weight_decay 0.0001 --factor 0.8 --patience 5 --min_lr 2e-05 --aggregators sum max --scalers amplification --no-fold --label OSMonth --loss CoxPHLoss
-    # python train_test_controller.py --model PNAConv --lr 0.001 --bs 32 --dropout 0.0 --epoch 1000 --num_of_gcn_layers 2 --num_of_ff_layers 1 --gcn_h 128 --fcl 256 --en best_n_fold_17-11-2022 --weight_decay 0.0001 --factor 0.8 --patience 5 --min_lr 2e-05 --aggregators sum max --scalers amplification --no-fold --label OSMonth --loss NegativeLogLikelihood
+    # python train_test_controller.py --model PNAConv --lr 0.001 --bs 32 --dropout 0.0 --epoch 1000 --num_of_gcn_layers 2 --num_of_ff_layers 1 --gcn_h 128 --fcl 256 --en best_n_fold_17-11-2022 --weight_decay 0.0001 --factor 0.8 --patience 5 --min_lr 2e-05 --aggregators sum max --no-fold --label OSMonth --loss CoxPHLoss
+    # python train_test_controller.py --model PNAConv --lr 0.001 --bs 32 --dropout 0.0 --epoch 1000 --num_of_gcn_layers 2 --num_of_ff_layers 1 --gcn_h 128 --fcl 256 --en best_n_fold_17-11-2022 --weight_decay 0.0001 --factor 0.8 --patience 5 --min_lr 2e-05 --aggregators sum max --no-fold --label OSMonth --loss NegativeLogLikelihood
     # python train_test_controller.py --dataset_name JacksonFischer --model PNAConv --lr 0.001 --bs 32 --dropout 0.0 --epoch 1000 --num_of_gcn_layers 2 --num_of_ff_layers 1 --gcn_h 128 --fcl 256 --en best_n_fold_17-11-2022 --weight_decay 0.0001 --factor 0.8 --patience 5 --min_lr 2e-05 --aggregators sum max --scalers amplification --no-fold --label OSMonth --loss NegativeLogLikelihood        
 
     # full_training
