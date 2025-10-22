@@ -17,14 +17,14 @@ def generate_random_string(length=10):
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), '../results')
 # Create the directory if it doesn't exist
 os.makedirs(RESULTS_DIR, exist_ok=True)
-
+wanted_label = "Progression"
 # Create a date string for the log file
 date_str = datetime.now().strftime("%Y-%m-%d")
-log_path = os.path.join(RESULTS_DIR, f"optuna_tumor_grade_{date_str}_{generate_random_string()}.log")
+log_path = os.path.join(RESULTS_DIR, f"optuna_{wanted_label}_{date_str}_{generate_random_string()}.log")
 
-print(f"[Optuna HPO TumorGrade] Logging output to: {log_path}")
+print(f"[Optuna HPO {wanted_label}] Logging output to: {log_path}")
 with open(log_path, 'a') as log_file:
-    log_file.write(f"[Optuna HPO TumorGrade] Logging output to: {log_path}\n")
+    log_file.write(f"[Optuna HPO {wanted_label}] Logging output to: {log_path}\n")
 
 # Path to your training script
 TRAIN_SCRIPT = os.path.join(os.path.dirname(__file__), "train_test_controller_classification.py")
@@ -33,30 +33,30 @@ def run_training_with_params(params):
     cmd = [
         "python", TRAIN_SCRIPT,
         "--dataset_name", "Lung",
-        "--label", "tumor_grade",
+        "--label", wanted_label,
         "--bs", str(params["bs"]),
         "--dropout", str(params["dropout"]),
-        "--en", f"TumorGrade_{date_str}",
+        "--en", f"{wanted_label}_{date_str}",
         "--epoch", "200",
         "--factor", str(params["factor"]),
         "--fcl", str(params["fcl"]),
         "--gcn_h", str(params["gcn_h"]),
-        "--gpu_id", "1",
+        "--gpu_id", "0",
         "--heads", str(params["heads"]),
         "--loss", "NegativeLogLikelihood",
         "--lr", str(params["lr"]),
         "--min_lr", str(params["min_lr"]),
         "--model", "GATV2",
-        "--no-fold",
+        "--fold",
         "--no-full_training",
-        "--t_v_t",
+        "--no-t_v_t",
         "--num_of_ff_layers", str(params["num_of_ff_layers"]),
         "--num_of_gcn_layers", str(params["num_of_gcn_layers"]),
         "--patience", "10",
         "--unit", "month",
         "--weight_decay", str(params["weight_decay"])
     ]
-    msg = f"\n[Optuna HPO TumorGrade] Running command: {' '.join(cmd)}"
+    msg = f"\n[Optuna HPO {wanted_label}] Running command: {' '.join(cmd)}"
     print(msg)
     with open(log_path, 'a') as log_file:
         log_file.write(msg + '\n')
@@ -69,20 +69,20 @@ def run_training_with_params(params):
         output_lines.append(line)
     process.wait()
     output = ''.join(output_lines)
-    print(f"[Optuna HPO TumorGrade] Output for this trial finished.")
+    print(f"[Optuna HPO {wanted_label}] Output for this trial finished.")
     with open(log_path, 'a') as log_file:
-        log_file.write("[Optuna HPO TumorGrade] Output for this trial finished.\n")
+        log_file.write("[Optuna HPO {wanted_label}] Output for this trial finished.\n")
     match = re.search(r"Average validation score: ([0-9.]+)", output)
     if match:
         return float(match.group(1))
     else:
-        print("[Optuna HPO TumorGrade] Could not find validation score in output.")
+        print("[Optuna HPO {wanted_label}] Could not find validation score in output.")
         with open(log_path, 'a') as log_file:
-            log_file.write("[Optuna HPO TumorGrade] Could not find validation score in output.\n")
+            log_file.write("[Optuna HPO {wanted_label}] Could not find validation score in output.\n")
         return 0.0
 
 def objective(trial):
-    msg = f"\n[Optuna HPO TumorGrade] Starting trial {trial.number}..."
+    msg = f"\n[Optuna HPO {wanted_label}] Starting trial {trial.number}..."
     print(msg)
     with open(log_path, 'a') as log_file:
         log_file.write(msg + '\n')
@@ -99,30 +99,30 @@ def objective(trial):
         "factor": trial.suggest_float("factor", 0.1, 0.5),
         "min_lr": trial.suggest_float("min_lr", 1e-5, 1e-3, log=True),
     }
-    msg = f"[Optuna HPO TumorGrade] Trial {trial.number} parameters: {params}"
+    msg = f"[Optuna HPO {wanted_label}] Trial {trial.number} parameters: {params}"
     print(msg)
     with open(log_path, 'a') as log_file:
         log_file.write(msg + '\n')
     mean_val_score = run_training_with_params(params)
-    msg = f"[Optuna HPO TumorGrade] Finished trial {trial.number} with score: {mean_val_score}\n"
+    msg = f"[Optuna HPO {wanted_label}] Finished trial {trial.number} with score: {mean_val_score}\n"
     print(msg)
     with open(log_path, 'a') as log_file:
         log_file.write(msg + '\n')
     return mean_val_score
 
 if __name__ == "__main__":
-    msg = f"[Optuna HPO TumorGrade] Logging output to: {log_path}"
+    msg = f"[Optuna HPO {wanted_label}] Logging output to: {log_path}"
     with open(log_path, 'a') as log_file:
         log_file.write(msg + '\n')
     print(msg)
-    msg = "[Optuna HPO TumorGrade] Starting hyperparameter optimization..."
+    msg = "[Optuna HPO {wanted_label}] Starting hyperparameter optimization..."
     print(msg)
     with open(log_path, 'a') as log_file:
         log_file.write(msg + '\n')
     with open(log_path, 'a') as log_file, contextlib.redirect_stdout(log_file):
         study = optuna.create_study(direction="maximize")
         study.optimize(objective, n_trials=1000)
-        msg = "[Optuna HPO TumorGrade] Best trial:"
+        msg = "[Optuna HPO {wanted_label}] Best trial:"
         print(msg)
         log_file.write(msg + '\n')
         trial = study.best_trial

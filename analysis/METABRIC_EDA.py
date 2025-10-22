@@ -6,12 +6,21 @@ import os
 import sys
 import re
 
-# Add the bin directory to sys.path so custom_tools can be imported
-sys.path.append("../bin")
-from custom_tools import get_gene_list
-
 # Set up paths
 BASE_DIR = "/home/rifaioglu/projects/GNNClinicalOutcomePrediction"
+
+# Define get_gene_list function directly to avoid torch dependency
+def get_gene_list(dataset_name="JacksonFischer"):
+    if dataset_name == "METABRIC":
+        return [
+            'HH3_total', 'CK19', 'CK8_18', 'Twist', 'CD68', 'CK14', 'SMA', 'Vimentin',
+            'c_Myc', 'HER2', 'CD3', 'HH3_ph', 'Erk1_2', 'Slug', 'ER', 'PR', 'p53', 'CD44',
+            'EpCAM', 'CD45', 'GATA3', 'CD20', 'Beta_catenin', 'CAIX', 'E_cadherin', 'Ki67',
+            'EGFR', 'pS6', 'Sox9', 'vWF_CD31', 'pmTOR', 'CK7', 'panCK', 'c_PARP_c_Casp3',
+            'DNA1', 'DNA2', 'H3K27me3', 'CK5', 'Fibronectin'
+        ]
+    else:
+        return []
 DATA_PATH = os.path.join(BASE_DIR, "data/METABRIC/raw/merged_preprocessed_dataset.csv")
 OUTPUT_DIR = os.path.join(BASE_DIR, "plots/analysis/EDA/METABRIC")
 
@@ -272,5 +281,153 @@ plot_path_pdf = os.path.join(OUTPUT_DIR, 'merged_marker_vs_OSmonth_scatter.pdf')
 plt.savefig(plot_path_png, dpi=300, bbox_inches='tight')
 plt.savefig(plot_path_pdf, bbox_inches='tight')
 plt.close()
+
+# Image statistics analysis
+print("Analyzing image statistics...")
+
+# Total number of unique images (group by ImageNumber)
+total_images = df['ImageNumber'].nunique()
+print(f"Total number of unique images: {total_images}")
+
+# Number of unique patients
+unique_patients = df['PID'].nunique()
+print(f"Total number of unique patients: {unique_patients}")
+
+# Images per patient statistics (count unique ImageNumber per patient)
+images_per_patient = df.groupby('PID')['ImageNumber'].nunique()
+images_per_patient_stats = images_per_patient.describe()
+print(f"\nImages per patient statistics:")
+print(images_per_patient_stats)
+
+# Save images per patient statistics
+images_per_patient_stats.to_csv(os.path.join(OUTPUT_DIR, 'images_per_patient_statistics.csv'))
+
+# Create histogram of images per patient
+plt.figure(figsize=(10, 6))
+plt.hist(images_per_patient, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+plt.title('Distribution of Images per Patient')
+plt.xlabel('Number of Images')
+plt.ylabel('Number of Patients')
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, 'images_per_patient_histogram.png'), dpi=300)
+plt.savefig(os.path.join(OUTPUT_DIR, 'images_per_patient_histogram.pdf'))
+plt.close()
+
+# Create box plot of images per patient
+plt.figure(figsize=(8, 6))
+sns.boxplot(y=images_per_patient, color='skyblue')
+plt.title('Images per Patient Distribution')
+plt.ylabel('Number of Images')
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, 'images_per_patient_boxplot.png'), dpi=300)
+plt.savefig(os.path.join(OUTPUT_DIR, 'images_per_patient_boxplot.pdf'))
+plt.close()
+
+# Images per patient by clinical subtype
+if 'clinical_subtype' in df.columns:
+    print("\nAnalyzing images per patient by clinical subtype...")
+    
+    # Calculate images per patient for each clinical subtype
+    subtype_image_stats = []
+    for subtype in clinical_subtype_order:
+        if subtype in df['clinical_subtype'].values:
+            subtype_df = df[df['clinical_subtype'] == subtype]
+            subtype_images_per_patient = subtype_df.groupby('PID')['ImageNumber'].nunique()
+            subtype_stats = subtype_images_per_patient.describe()
+            subtype_stats.name = subtype
+            subtype_image_stats.append(subtype_stats)
+    
+    # Combine statistics
+    if subtype_image_stats:
+        subtype_image_df = pd.concat(subtype_image_stats, axis=1)
+        subtype_image_df.to_csv(os.path.join(OUTPUT_DIR, 'images_per_patient_by_clinical_subtype.csv'))
+        print("Images per patient by clinical subtype:")
+        print(subtype_image_df)
+        
+        # Create box plot of images per patient by clinical subtype
+        plt.figure(figsize=(12, 8))
+        plot_data = []
+        plot_labels = []
+        plot_colors = []
+        
+        for subtype in clinical_subtype_order:
+            if subtype in df['clinical_subtype'].values:
+                subtype_df = df[df['clinical_subtype'] == subtype]
+                subtype_images = subtype_df.groupby('PID')['ImageNumber'].nunique()
+                plot_data.append(subtype_images)
+                plot_labels.append(subtype)
+                plot_colors.append(my_pal[subtype])
+        
+        if plot_data:
+            # Create box plot manually to avoid seaborn issues
+            bp = plt.boxplot(plot_data, labels=plot_labels, patch_artist=True)
+            for patch, color in zip(bp['boxes'], plot_colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+            
+            plt.title('Images per Patient by Clinical Subtype')
+            plt.xlabel('Clinical Subtype')
+            plt.ylabel('Number of Images')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, 'images_per_patient_by_clinical_subtype_boxplot.png'), dpi=300)
+            plt.savefig(os.path.join(OUTPUT_DIR, 'images_per_patient_by_clinical_subtype_boxplot.pdf'))
+            plt.close()
+
+# Read existing dataset statistics if it exists
+existing_stats_path = os.path.join(OUTPUT_DIR, 'dataset_statistics.csv')
+if os.path.exists(existing_stats_path):
+    existing_df = pd.read_csv(existing_stats_path)
+    print("Found existing dataset_statistics.csv, appending image statistics...")
+else:
+    existing_df = pd.DataFrame(columns=['Metric', 'Value'])
+
+# Calculate additional statistics
+print("Calculating additional dataset statistics...")
+
+# Cells per image statistics
+cells_per_image = df.groupby('ImageNumber').size()
+cells_per_image_stats = cells_per_image.describe()
+
+# Cells per sample (patient) statistics  
+cells_per_sample = df.groupby('PID').size()
+cells_per_sample_stats = cells_per_sample.describe()
+
+# Summary statistics for the dataset
+dataset_summary = {
+    'Total number of patients': unique_patients,
+    'Total number of images': total_images,
+    'Average cells per image': cells_per_image.mean(),
+    'Standard deviation of cells per image': cells_per_image.std(),
+    'Minimum cells per image': cells_per_image.min(),
+    'Maximum cells per image': cells_per_image.max(),
+    'Minimum cells per sample': cells_per_sample.min(),
+    'Maximum cells per sample': cells_per_sample.max(),
+    'Minimum images per patient': images_per_patient.min(),
+    'Maximum images per patient': images_per_patient.max(),
+    'Mean Images per Patient': images_per_patient.mean(),
+    'Median Images per Patient': images_per_patient.median(),
+    'Std Images per Patient': images_per_patient.std()
+}
+
+# Create new statistics dataframe
+new_stats_df = pd.DataFrame(list(dataset_summary.items()), columns=['Metric', 'Value'])
+
+# Combine existing and new statistics
+combined_df = pd.concat([existing_df, new_stats_df], ignore_index=True)
+
+# Save combined dataset summary
+combined_df.to_csv(os.path.join(OUTPUT_DIR, 'dataset_statistics.csv'), index=False)
+
+print(f"\nDataset Summary:")
+for metric, value in dataset_summary.items():
+    print(f"{metric}: {value}")
+
+print(f"\nCells per image statistics:")
+print(cells_per_image_stats)
+
+print(f"\nCells per sample (patient) statistics:")
+print(cells_per_sample_stats)
 
 print("Analysis complete! Results saved in:", OUTPUT_DIR) 

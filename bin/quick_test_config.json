@@ -1,0 +1,27 @@
+{
+  "marker_counts": [10, 50, 100],
+  "sample_counts": [50, 200],
+  "epochs_per_config": 5,
+  "model_config": {
+    "model_type": "GATV2",
+    "num_gcn_layers": 2,
+    "num_ff_layers": 2,
+    "gcn_hidden_neurons": 32,
+    "ff_hidden_neurons": 64,
+    "dropout": 0.2,
+    "heads": 2
+  },
+  "training_config": {
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "batch_size": 16,
+    "loss_function": "MSE"
+  },
+  "synthetic_data_config": {
+    "num_nodes_per_sample": 50,
+    "edge_probability": 0.1,
+    "feature_noise": 0.1,
+    "label_noise": 0.05
+  },
+  "random_seed": 42
+}

@@ -148,7 +148,7 @@ class TissueDataset(InMemoryDataset):
 
 
 class LungDataset(InMemoryDataset):
-    def __init__(self, root, wanted_label = "Relapse", transform=None, pre_transform=None):
+    def __init__(self, root, wanted_label = "Progression", train=True, transform=None, pre_transform=None):
         """Creates the dataset for given "root" location.
 
         Args:
@@ -158,9 +158,10 @@ class LungDataset(InMemoryDataset):
         """
         custom_tools.set_seeds(42)
         self.wanted_label = wanted_label
+        self.train = train
         super().__init__(root, transform, pre_transform)
         print(f"Target prediction: {wanted_label}")
-        
+        print("processed_paths", self.processed_paths)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     @property
@@ -168,8 +169,11 @@ class LungDataset(InMemoryDataset):
         return ["merged_preprocessed_dataset.csv"]
 
     @property
-    def processed_file_names(self):
-        return [f'data.pt']
+    def processed_file_names(self, train=True):
+        if self.train:
+            return [f'data_{self.wanted_label}_train.pt']
+        else:
+            return [f'data_{self.wanted_label}_test.pt']
 
     def download(self):
         # Download to `self.raw_dir`.
@@ -184,6 +188,7 @@ class LungDataset(InMemoryDataset):
             if fl.endswith("features.pickle"):
                 # print(fl)
                 img_pid = fl.split("_features.pickle")[0]
+                
                 with open(os.path.join(self.root,  "raw", f'{img_pid}_clinical_info.pickle'), 'rb') as handle:
                     clinical_info_dict = pickle.load(handle)
                 
@@ -191,7 +196,6 @@ class LungDataset(InMemoryDataset):
                     censored = 0 if clinical_info_dict["Patientstatus"].lower().startswith("death") else 1
                 elif "Overall Survival Status" in clinical_info_dict.keys():
                     censored = 0 if "deceased" in clinical_info_dict["Overall Survival Status"].lower() else 1
-                    # print(censored, clinical_info_dict["Overall Survival Status"].lower())
 
                 with open(os.path.join(self.root, "raw", f'{img_pid}_features.pickle'), 'rb') as handle:
                     feature_arr = pickle.load(handle)
@@ -209,7 +213,7 @@ class LungDataset(InMemoryDataset):
                     coordinates_arr = pickle.load(handle)
                     coordinates_arr = np.array(coordinates_arr)
                 # print("clinical_info_dict[self.wanted_label]", clinical_info_dict[self.wanted_label], torch.Tensor(clinical_info_dict[self.wanted_label]))
-                
+
                 if self.wanted_label == "tumor_grade":
                     y_val = int(clinical_info_dict["Grade"]) - 1
                     data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), 
@@ -225,12 +229,29 @@ class LungDataset(InMemoryDataset):
                                 age=clinical_info_dict["Age"],  
                                 dfs_month=clinical_info_dict["DFS"], 
                                 ct_class = ct_class_arr)
+                elif self.wanted_label == "Progression":
+                    y_val = clinical_info_dict["Progression"]
+                    if not pd.isna(y_val):
+                        
+                        # print("y_val", type(y_val))
+                        #  "Sex","Age","BMI","Smoking Status","Pack Years","Stage","Progression","Death","Survival or loss (years)","Predominant histological pattern"
+                        # print("clinical_info_dict", clinical_info_dict)
+                        data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), 
+                                    edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), 
+                                    pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), 
+                                    y=torch.tensor(y_val, dtype=torch.long), 
+                                    osmonth=clinical_info_dict["Survival or loss (years)"], 
+                                    sample_id= str(img_pid),
+                                    img_id= str(img_pid),
+                                    clinical_type=str(clinical_info_dict["Predominant histological pattern"]), 
+                                    disease_stage=clinical_info_dict["Stage"])
                 else:
                     y_val = clinical_info_dict[self.wanted_label]
+                    # print("y_val", y_val, torch.Tensor([y_val]))
                     data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), 
                                 edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), 
                                 pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), 
-                                y=torch.Tensor(y_val),
+                                y= torch.Tensor([y_val]).type(torch.LongTensor),
                                 osmonth=clinical_info_dict["OS"], 
                                 clinical_type=str(clinical_info_dict["Typ"]), 
                                 disease_stage=clinical_info_dict["Stage"],  
@@ -240,9 +261,11 @@ class LungDataset(InMemoryDataset):
                                 age=clinical_info_dict["Age"],  
                                 dfs_month=clinical_info_dict["DFS"], 
                                 ct_class = ct_class_arr)
-                
-                data_list.append(data)
-                count+=1
+                if (self.train and not img_pid.startswith("LUAD_V")) or (not self.train and img_pid.startswith("LUAD_V")):
+                    data_list.append(data)
+                    count += 1
+                else:
+                    pass
 
         print(f"Number of samples: {count}")
         if self.pre_filter is not None:

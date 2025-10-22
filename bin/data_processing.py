@@ -20,7 +20,6 @@ CELL_COUNT_THR = 100
 
 
 
-
 def get_dataset_from_csv(path="a", index_col=None):
     """
     path = None
@@ -46,11 +45,11 @@ def get_cell_count_df(df_dataset, cell_count_thr, sample_col = "ImageNumber"):
 
 def generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num,  pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos=None, plot=False,PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
     
-    print(df_image[[loc_x_col, loc_y_col]])
+
     points = df_image[[loc_x_col, loc_y_col]].to_numpy()
-    print(points)
+    # print(points)
     
-    print(df_image.columns)
+    # print(df_image.columns)
     
     # point_labels = list(df_image["ObjectNumber"].values)
     
@@ -166,20 +165,12 @@ def generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num,  pid, 
                                   'Sex', '3-Gene classifier subtype', 'TMB (nonsynonymous)', 'tumor_size',
                                    'Tumor Stage', 'diseasestatus', 'clinical_type']
     elif "Lung" in RAW_DATA_PATH:
-        lung_clinical_feat = ['ImageNumber', 'CellNumber', 'Area',
-                                     'Compartment', 
-                                    'BatchID', 'Panel', 'TmaID', 'TmaBlock', 'acID', 'mclust',
-                                    'TMA', 'Tma_ac', 'cell_category', 'cell_type', 'cell_subtype', 'ROI_xy',
-                                    'RoiID', 'Patient_Nr', 'X..spots', 'DX.name', 'x.y.localisation', 'Age',
-                                    'Gender', 'Typ', 'Grade', 'Size', 'Vessel', 'Pleura', 'T.new', 'N',
-                                    'M.new', 'Stage', 'R', 'Chemo', 'Radio', 'Chemo3', 'Radio4', 'Relapse',
-                                    'Chemo5', 'Radio6', 'DFS', 'Ev.O', 'OS', 'Smok', 'Nikotin', 'ROI',
-                                    'Patient_ID', 'LN.Met', 'Dist.Met', 'NeoAdj', 'Area_px_Stroma',
-                                    'Area_px_Tumour', 'Area_px_Core', 'Area_mm_Stroma', 'Area_mm_Tumour',
-                                    'Area_mm_Core', 'Sample_ID']
-        
+        lung_clinical_feat = ["sample_id", "Sex","Age","BMI","Smoking Status","Pack Years","Stage","Progression","Death","Survival or loss (years)","Predominant histological pattern"]
+        marker_list = ["CD117", "CD11c", "CD14", "CD163", "CD16", "CD20", "CD31", "CD3", "CD4", "CD68", "CD8a", "CD94", "DNA1", "FoxP3", "HLA-DR", "Histone H3", "MPO", "Pancytokeratin"]
         for col in lung_clinical_feat:
             clinical_info_dict[col] = df_image[col].values[0]
+            if col == "sample_id" and pos:
+                clinical_info_dict[col] = f"{clinical_info_dict[col]}_{pos}"
         
         clinical_info_dict["cell_count"] = len(df_image)
 
@@ -196,9 +187,12 @@ def generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num,  pid, 
     # "ImageNumber", "ObjectNumber", "Location_Center_X", "Location_Center_Y", "PID", "grade", "tumor_size", "age", "treatment", "DiseaseStage", "diseasestatus", "clinical_type", "DFSmonth", "OSmonth"
 
     with open(os.path.join(RAW_DATA_PATH, f'{img_num_lbl}_{pid}_features.pickle'), 'wb') as handle:
-        pickle.dump(np.array(df_image.drop(nonfeat_cols, axis=1)), handle, protocol=pickle.HIGHEST_PROTOCOL)
+        if "Lung" in RAW_DATA_PATH:
+            pickle.dump(np.array(df_image[marker_list]), handle, protocol=pickle.HIGHEST_PROTOCOL)
+        else:   
+            pickle.dump(np.array(df_image.drop(nonfeat_cols, axis=1)), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-    if "METABRIC" in RAW_DATA_PATH:
+    if "METABRIC" in RAW_DATA_PATH or "Lung" in RAW_DATA_PATH:
         with open(os.path.join(RAW_DATA_PATH, f'{img_num_lbl}_{pid}_ct_class.pickle'), 'wb') as handle:
             pickle.dump(df_image[["cell_type"]].to_numpy(), handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
@@ -215,7 +209,7 @@ def generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num,  pid, 
 
 
 def generate_graphs_using_points_lung_data(df_image, imgnum_edge_thr_dict, img_num,  pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos=None, plot=False,PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
-    
+    print("df_image", df_image)
     points = df_image[[loc_x_col, loc_y_col]].to_numpy()
 
     if pos:
@@ -290,7 +284,7 @@ def generate_graphs_using_points_lung_data(df_image, imgnum_edge_thr_dict, img_n
        'CD248 / Endosialin', 'LYVE-1', 'PDGFR-b', 'CD34', 'CD4', 'vWF + CD31',
        'CXCL12', 'CCL21', 'Pan Cytokeratin + Keratin Epithelial', 'Cadherin-6',
        'Iridium_191', 'Iridium_193', 'Ki-67', 'Caveolin-1', 'CD15']
-    lung_clinical_feat = ['ImageNumber', 'Area', 'Compartment', 
+    lung_old_clinical_feat = ['ImageNumber', 'Area', 'Compartment', 
                             'BatchID', 'Panel', 'TmaID', 'TmaBlock', 'acID', 'mclust',
                             'TMA', 'Tma_ac', 'ROI_xy',
                             'RoiID', 'Patient_Nr', 'DX.name', 'Age',
@@ -300,7 +294,9 @@ def generate_graphs_using_points_lung_data(df_image, imgnum_edge_thr_dict, img_n
                             'Patient_ID', 'LN.Met', 'Dist.Met', 'NeoAdj', 'Area_px_Stroma',
                             'Area_px_Tumour', 'Area_px_Core', 'Area_mm_Stroma', 'Area_mm_Tumour',
                             'Area_mm_Core', 'Sample_ID']
-        
+    marker_list = ["CD117", "CD11c", "CD14", "CD163", "CD16", "CD20", "CD31", "CD3", "CD4", "CD68", "CD8a", "CD94", "DNA1", "FoxP3", "HLA-DR", "Histone H3", "MPO", "Pancytokeratin"]
+    lung_clinical_feat = ["sample_id", "Sex","Age","BMI","Smoking Status","Pack Years","Stage","Progression","Death","Survival or loss (years)","Predominant histological pattern"]
+    print("df_image", df_image)
     for col in lung_clinical_feat:
         clinical_info_dict[col] = df_image[col].values[0]
     
@@ -316,7 +312,7 @@ def generate_graphs_using_points_lung_data(df_image, imgnum_edge_thr_dict, img_n
         pickle.dump(np.array(df_image[marker_list]), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     with open(os.path.join(RAW_DATA_PATH, f'{img_num_lbl}_{pid}_ct_class.pickle'), 'wb') as handle:
-        pickle.dump(df_image[["cell_type", "cell_category"]].to_numpy(), handle, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(df_image[["cell_type"]].to_numpy(), handle, protocol=pickle.HIGHEST_PROTOCOL)
         
     # save the feature vector as numpy array, first column is the cell id
     with open(os.path.join(RAW_DATA_PATH, f'{img_num_lbl}_{pid}_coordinates.pickle'), 'wb') as handle:
@@ -404,7 +400,7 @@ def create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_T
     # get_cell_count_df(df_dataset, cell_count_thr, sample_col = "ImageNumber"):    
     df_cell_count = get_cell_count_df(df_dataset, cell_count_thr,sample_col =sample_col)
     imgnum_edge_thr_dict = dict()
-    print("df_cell_count", df_cell_count)
+    # print("df_cell_count", df_cell_count)
 
     # print(df_dataset["PID"])
 
@@ -420,10 +416,13 @@ def create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_T
     
         new_cell_ids = list(range(len(df_image)))
         
+        # print(cell_count, GRAPH_DIV_THR, divide_sample)
         # TODO: make this parametric 
-        if cell_count >= GRAPH_DIV_THR and divide_sample==True:
+        if cell_count >= GRAPH_DIV_THR and divide_sample:
+            # print("Dividing sample")
             # find the center of the cells
             x_center, y_center = df_image[[x_loc, y_loc]].describe().loc["mean"][x_loc], df_image[[x_loc, y_loc]].describe().loc["mean"][y_loc]
+            # print(x_center, y_center)
             # ll lower-left  ul upper-left lr lower right points 
             """ll_points = df_image[((df_image['Location_Center_X'] <= x_center) & (df_image['Location_Center_Y'] <= y_center))][["Location_Center_X", "Location_Center_Y"]].to_numpy()
             ul_points = df_image[((df_image['Location_Center_X'] <= x_center) & (df_image['Location_Center_Y'] >= y_center))][["Location_Center_X", "Location_Center_Y"]].to_numpy()
@@ -435,17 +434,20 @@ def create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_T
             lr_df_image = df_image[((df_image['Location_Center_X'] >= x_center) & (df_image['Location_Center_Y'] <= y_center))]
             ur_df_image = df_image[((df_image['Location_Center_X'] >= x_center) & (df_image['Location_Center_Y'] >= y_center))]
 
-            
 
-            generate_graphs_using_points(ll_df_image, imgnum_edge_thr_dict, img_num, pid, "ll", plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
+            """generate_graphs_using_points(ll_df_image, imgnum_edge_thr_dict, img_num, pid, "ll", plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
             generate_graphs_using_points(ul_df_image, imgnum_edge_thr_dict, img_num, pid, "ul", plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
             generate_graphs_using_points(lr_df_image, imgnum_edge_thr_dict, img_num, pid, "lr", plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
-            generate_graphs_using_points(ur_df_image, imgnum_edge_thr_dict, img_num, pid, "ur", plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
+            generate_graphs_using_points(ur_df_image, imgnum_edge_thr_dict, img_num, pid, "ur", plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)"""
+            generate_graphs_using_points(ll_df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos="ll", plot=plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
+            generate_graphs_using_points(ul_df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos="ul", plot=plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
+            generate_graphs_using_points(lr_df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos="lr", plot=plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
+            generate_graphs_using_points(ur_df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos="ur", plot=plot, PLOT_PATH=PLOT_PATH,RAW_DATA_PATH=RAW_DATA_PATH)
 
         else:
             # points = df_image[["Location_Center_X", "Location_Center_Y"]].to_numpy()
             # generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Center_X", loc_y_col="Center_Y", pos=None, plot = plot, PLOT_PATH=PLOT_PATH)
-            generate_graphs_using_points_lung_data(df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Center_X", loc_y_col="Center_Y", pos=None, plot = plot, PLOT_PATH=PLOT_PATH)
+            generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos=None, plot = plot, PLOT_PATH=PLOT_PATH)
        
 def check_cell_ids_sequential():
     df_dataset = get_dataset_from_csv()
@@ -515,7 +517,7 @@ def data_processing_metabric_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, 
 
 # data_processing_metabric_pipeline("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/METABRIC/raw/merged_preprocessed_dataset.csv",CELL_COUNT_THR=CELL_COUNT_THR, GRAPH_DIV_THR=GRAPH_DIV_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH)
 
-def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
+def data_processing_lung_old_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
     # print("Creating compact dataset...")
     # METABRIC_preprocess(visualize = False)
     df_dataset = get_dataset_from_csv(data_path, index_col=0)
@@ -527,4 +529,20 @@ def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT
     print("Creating graphs...")
     create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "Sample_ID", pid_col = "Patient_ID",  x_loc ="Center_X", y_loc = "Center_Y", divide_sample=False,  plot=True, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
 
-# data_processing_lung_pipeline("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/lung_imc_dataset.csv")
+# data_processing_lungold_pipeline("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/lung_imc_dataset.csv")
+
+def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
+    # print("Creating compact dataset...")
+    # METABRIC_preprocess(visualize = False)
+    
+
+    df_dataset = get_dataset_from_csv(data_path, index_col=None)
+    get_edge_length_dist(df_dataset, cell_count_thr=CELL_COUNT_THR, quant=0.975, sample_col="sample_id", loc_x="Location_Center_X", loc_y="Location_Center_Y", PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH)
+    
+    print("Calculating cell count distribution....")
+    # df_cell_count = get_cell_count_df(CELL_COUNT_THR, path=data_path)
+    print(RAW_DATA_PATH)
+    print("Creating graphs...")
+    create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "sample_id", pid_col = "sample_id",  x_loc ="Location_Center_X", y_loc = "Location_Center_Y", divide_sample=True,  plot=False, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
+
+# data_processing_lung_pipeline("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/raw/merged_preprocessed_dataset.csv")

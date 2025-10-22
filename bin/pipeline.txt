@@ -17,3 +17,6 @@ docker cp ea98ee9a0761:/GNNClinicalOutcomePrediction/models/METABRIC/METABRIC_xf
 python train_with_session.py --dataset_name METABRIC --no-full_training --model_name METABRIC_xfold
 
 python explain_driver.py --dataset_name METABRIC --exp_name "METABRIC" --job_id METABRIC
+
+
+python test_runtime_simulation.py

@@ -17,7 +17,7 @@ import pytorch_lightning as pl
 from torch_geometric import utils
 from data_preparation import get_basel_zurich_staining_panel
 from sklearn.model_selection import GroupKFold
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 
 S_PATH = "/".join(os.path.realpath(__file__).split(os.sep)[:-1])
 OUT_DATA_PATH = os.path.join(S_PATH, "../data", "out_data")
@@ -187,7 +187,7 @@ def save_model(model: CustomGCN,fileName ,mode: str, path = os.path.join(os.curd
     print(f"Saved model path: {path_model}!")
 
 
-def load_model(fileName: str, path =  os.curdir, model_type: str = "NONE", args: dict = {}, deg = None, gpu_id=None, device=None):
+def load_model(fileName: str, path =  os.curdir, model_type: str = "NONE", args: dict = {}, deg = None, gpu_id=None, label_type = "regression", device=None):
     """Models the specified model and returns it
 
     Args:
@@ -240,7 +240,7 @@ def load_model(fileName: str, path =  os.curdir, model_type: str = "NONE", args:
                     deg = deg, # Comes from data not hyperparameter
                     # num_classes = args["num_classes"],
                     heads = args["heads"],
-                    label_type = args["label"]
+                    label_type = label_type# args["label"]
                         )
 
         model.load_state_dict(torch.load(path_model, map_location=device))
@@ -511,6 +511,14 @@ def general_parser() -> argparse.Namespace:
         default= False,
         metavar='F',
         help='Perform full_training, default: --no-full_training (--full_training, --no-full_training),')
+    
+    parser.add_argument(
+        '--t_v_t',
+        type= bool,
+        action=argparse.BooleanOptionalAction,
+        default= False,
+        metavar='F',
+        help='Perform t_v_t, default: --no-t_v_t (--t_v_t, --no-t_v_t),')
 
     parser.add_argument(
         '--label',
@@ -912,6 +920,143 @@ def get_n_fold_split(dataset, dataset_name):
                 (fold), # fold number
                 (torch.utils.data.SubsetRandomSampler(train_idx)),
                 (torch.utils.data.SubsetRandomSampler(test_idx))))
+
+
+    return samplers
+
+
+def extract_patient_id(sample_id):
+    """
+    Extract patient ID from sample ID.
+    
+    Parameters:
+    -----------
+    sample_id : str
+        Sample ID in format like "LUAD_D352_ur" or "LUAD_D352ur_LUAD_D352"
+        
+    Returns:
+    --------
+    str : Patient ID (e.g., "LUAD_D352")
+    """
+    # Handle different sample ID formats
+    if "_" in sample_id:
+        parts = sample_id.split("_")
+        
+        # Check if it's the format "LUAD_D352ur_LUAD_D352" (4 parts)
+        if len(parts) == 4:
+            # Take the last two parts: "LUAD_D352"
+            return "_".join(parts[-2:])
+        elif len(parts) >= 2:
+            # For format like "LUAD_D352_ur" -> "LUAD_D352" (take all except last)
+            return "_".join(parts[:-1])
+    
+    # If no underscore or other format, return as is
+    return sample_id
+
+def create_stratified_cv_folds_lung_dataset(dataset, clinical_outcome_label, n_folds=5, random_state=42):
+    """
+    Create stratified cross-validation folds with equal class representation and patient-level stratification.
+    FIXED VERSION - No duplicate indices.
+    
+    Parameters:
+    -----------
+    dataset : PyTorch Dataset
+        The dataset containing samples with clinical outcomes
+    clinical_outcome_label : str
+        The clinical outcome of interest (e.g., "Progression")
+    n_folds : int, default=5
+        Number of cross-validation folds
+    random_state : int, default=42
+        Random seed for reproducibility
+        
+    Returns:
+    --------
+    dict : Dictionary where keys are fold numbers (0 to n_folds-1) and values are 
+           lists containing [train_indices, validation_indices]
+    """
+    
+    # Extract sample information
+    sample_data = []
+    
+    for idx, data in enumerate(dataset):
+        sample_id = data.sample_id
+        # Extract patient ID using the helper function
+        patient_id = extract_patient_id(sample_id)
+        
+        sample_data.append({
+            'sample_idx': idx,
+            'sample_id': sample_id,
+            'patient_id': patient_id,
+            'outcome': data.y.item() if hasattr(data.y, 'item') else data.y
+        })
+    
+    # Convert to DataFrame for easier manipulation
+    df = pd.DataFrame(sample_data)
+    # print(df)
+    # Count class distribution
+    class_counts = df['outcome'].value_counts()
+    """print(f"Original class distribution:")
+    for class_val, count in class_counts.items():
+        print(f"  Class {class_val}: {count} samples")"""
+    
+    # Find the minority class count
+    minority_class_count = min(class_counts.values)
+    # print(f"Minority class count: {minority_class_count}")
+    
+    # Get samples for each class
+    class_0_samples = df[df['outcome'] == 0].copy()
+    class_1_samples = df[df['outcome'] == 1].copy()
+    
+    # Downsample majority class to match minority class
+    if len(class_0_samples) > minority_class_count:
+        class_0_samples = class_0_samples.sample(n=minority_class_count, random_state=random_state)
+    if len(class_1_samples) > minority_class_count:
+        class_1_samples = class_1_samples.sample(n=minority_class_count, random_state=random_state)
+    
+    # Combine balanced samples
+    balanced_df = pd.concat([class_0_samples, class_1_samples]).reset_index(drop=True)
+    
+    # print(f"Balanced class distribution:")
+    balanced_class_counts = balanced_df['outcome'].value_counts()
+    """for class_val, count in balanced_class_counts.items():
+        print(f"  Class {class_val}: {count} samples")"""
+    
+    # Create patient-level stratification
+    # Get unique patients and their outcomes
+    patient_outcomes = balanced_df.groupby('patient_id')['outcome'].first().reset_index()
+    
+    # Create stratified folds at patient level
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+    
+    folds_dict = {}
+    samplers = []
+    for fold_idx, (train_patient_indices, val_patient_indices) in enumerate(skf.split(patient_outcomes['patient_id'], patient_outcomes['outcome'])):
+        
+        # Get patient IDs for this fold
+        train_patients = patient_outcomes.iloc[train_patient_indices]['patient_id'].tolist()
+        val_patients = patient_outcomes.iloc[val_patient_indices]['patient_id'].tolist()
+        
+        # Get sample indices for training and validation
+        train_sample_indices = balanced_df[balanced_df['patient_id'].isin(train_patients)]['sample_idx'].tolist()
+        val_sample_indices = balanced_df[balanced_df['patient_id'].isin(val_patients)]['sample_idx'].tolist()
+        samplers.append((
+                (fold_idx), # fold number
+                (torch.utils.data.SubsetRandomSampler(train_sample_indices)),
+                (torch.utils.data.SubsetRandomSampler(val_sample_indices))))
+
+        folds_dict[fold_idx] = [train_sample_indices, val_sample_indices]
+        
+        # Print fold statistics
+        train_outcomes = balanced_df[balanced_df['sample_idx'].isin(train_sample_indices)]['outcome']
+        val_outcomes = balanced_df[balanced_df['sample_idx'].isin(val_sample_indices)]['outcome']
+        
+        """print(f"\nFold {fold_idx}:")
+        print(f"  Training: {len(train_sample_indices)} samples from {len(train_patients)} patients")
+        print(f"  Validation: {len(val_sample_indices)} samples from {len(val_patients)} patients")
+        print(f"  Training class distribution: {train_outcomes.value_counts().to_dict()}")
+        print(f"  Validation class distribution: {val_outcomes.value_counts().to_dict()}")"""
+    
+    
 
 
     return samplers

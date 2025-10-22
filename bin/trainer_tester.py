@@ -10,6 +10,7 @@ import plotting
 from tqdm import tqdm
 import pandas as pd
 import os
+import random
 from torch_geometric.utils import degree
 from evaluation_metrics import r_squared_score, mse, rmse, mae
 import custom_tools
@@ -44,6 +45,8 @@ class trainer_tester:
 
         if self.parser_args.full_training:
             self.full_train_loop()
+        elif self.parser_args.t_v_t:
+            self.train_val_test_loop()
         else:
             self.train_test_loop()
 
@@ -71,11 +74,8 @@ class trainer_tester:
         """
         if self.parser_args.dataset_name == "Lung":
             self.dataset = LungDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}"), self.parser_args.label)
-            # RAW_DATA_PATH = os.path.join("../data", f"{dataset_name}/raw")
-            #dataset = LungDataset(f"../data/{dataset_name}",  "Relapse")
         else:
             self.dataset = TissueDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}", self.parser_args.unit),  self.parser_args.unit)
-
 
         print("Number of samples:", len(self.dataset), self.parser_args.dataset_name,  self.parser_args.label)
 
@@ -109,7 +109,7 @@ class trainer_tester:
             # Only set class_weights if defined for DiseaseStage
             self.setup_args.criterion = torch.nn.CrossEntropyLoss()
 
-        elif self.parser_args.label == "Relapse":
+        elif self.parser_args.label in ["Relapse","Progression"]:
             print("Classification")
             self.label_type = "classification"
             # self.setup_args.criterion = torch.nn.CrossEntropyLoss()
@@ -151,12 +151,64 @@ class trainer_tester:
 
             self.fold_dicts.append(fold_dict)
 
+        # Add train/validation/test split if t_v_t is True
+        elif self.parser_args.t_v_t:
+            print("Creating train/validation/test split")
+            # Create train/validation/test split
+            dataset_size = len(self.dataset)
+            train_size = int(0.7 * dataset_size)
+            val_size = int(0.15 * dataset_size)
+            test_size = dataset_size - train_size - val_size
+            print("Train size:", train_size, "Validation size:", val_size, "Test size:", test_size)
+            
+            # Create indices for the split
+            indices = list(range(dataset_size))
+            random.shuffle(indices)
+            
+            train_indices = indices[:train_size]
+            val_indices = indices[train_size:train_size + val_size]
+            test_indices = indices[train_size + val_size:]
+            
+            # Create samplers
+            train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
+            val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
+            test_sampler = torch.utils.data.SubsetRandomSampler(test_indices)
+            
+            # Create data loaders
+            train_loader = DataLoader(self.dataset, batch_size=self.parser_args.bs, sampler=train_sampler)
+            validation_loader = DataLoader(self.dataset, batch_size=self.parser_args.bs, sampler=val_sampler)
+            test_loader = DataLoader(self.dataset, batch_size=self.parser_args.bs, sampler=test_sampler)
+            
+            # Calculate degree if needed
+            deg = -1
+            if self.parser_args.model in ["PNAConv", "MMAConv", "GMNConv"]:
+                deg = self.calculate_deg(train_sampler)
+            
+            # Create model, optimizer, and scheduler
+            model = self.set_model(deg)
+            optimizer = torch.optim.Adam(model.parameters(), lr=self.parser_args.lr, weight_decay=self.parser_args.weight_decay)
+            scheduler = ReduceLROnPlateau(optimizer, 'min', factor=self.parser_args.factor, patience=self.parser_args.patience, min_lr=self.parser_args.min_lr, verbose=True)
+            
+            # Create fold dict for train/val/test split
+            tvt_fold_dict = {
+                "fold": "train_val_test",
+                "train_loader": train_loader,
+                "validation_loader": validation_loader,
+                "test_loader": test_loader,
+                "deg": deg,
+                "model": model,
+                "optimizer": optimizer,
+                "scheduler": scheduler
+            }
+            
+            self.fold_dicts.append(tvt_fold_dict)
+
         
         else:
             
             # self.samplers = custom_tools.k_fold_by_group(self.dataset)
             if self.parser_args.dataset_name == "Lung":
-                self.samplers = custom_tools.k_fold_random_split(self.dataset)
+                self.samplers = custom_tools.create_stratified_cv_folds_lung_dataset(self.dataset, self.parser_args.label)
             else:
                 self.samplers = custom_tools.get_n_fold_split(self.dataset, self.parser_args.dataset_name)
 
@@ -257,7 +309,7 @@ class trainer_tester:
         for data in fold_dict["train_loader"]:  # Iterate in batches over the training dataset.
 
             out = fold_dict["model"](data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device)).float().to(self.device) # Perform a single forward pass.
-            # print("Out shape", out.shape, torch.sigmoid(out), data.y)
+            # print("Out shape", out.shape, torch.sigmoid(out).shape, data.y.shape)
             loss = None
             if self.parser_args.loss == "CoxPHLoss":#  or self.parser_args.loss == "NegativeLogLikelihood":
                 loss = self.setup_args.criterion(out, data.y.to(self.device), data.is_censored.to(self.device))  # Compute the loss.    
@@ -267,15 +319,15 @@ class trainer_tester:
                     target = data.y.long()
                     if target.dim() > 1:
                         target = target.view(-1)
-                    # print("Batch labels:", target.tolist())
-                    # print("Batch label min/max:", target.min().item(), target.max().item())
-                    # print("Model output shape:", out.shape)
                     # Do NOT squeeze the output for classification
-                    loss = self.setup_args.criterion(out, target.to(self.device))
+                    if self.num_classes == 1:
+                        loss = self.setup_args.criterion(out, target.to(self.device).float().unsqueeze(1))
+                    else:
+                        loss = self.setup_args.criterion(out, data.y.long().to(self.device))
                 else:
                     # For regression, squeeze output and target
                     loss = self.setup_args.criterion(out.squeeze(), data.y.to(self.device))
-                # print("Loss", loss, loss.item(), data.y.to(self.device), out.squeeze(), out)
+                # print("Loss", loss, loss.item(), data.y.to(self.device), out.squeeze(), out)
             
             loss.backward()  # Derive gradients.
             
@@ -320,12 +372,14 @@ class trainer_tester:
         model.eval()
 
         total_loss = 0.0
-        pid_list, img_list, pred_list, true_list, tumor_grade_list, clinical_type_list, osmonth_list, censorship_list, relapse_list = [], [], [], [], [], [], [], [], []
+        pid_list, img_list, pred_list, true_list, tumor_grade_list, clinical_type_list, osmonth_list, censorship_list, progression_list, sample_id_list, disease_stage_list = [], [], [], [], [], [], [], [], [], [], []
         
         for data in loader:  # Iterate in batches over the training/test dataset.
             if data.y.shape[0]>1:
+                
                 out = model(data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device)).float().to(self.device) # Perform a single forward pass.
-
+                # print("out", out)
+                # print("data.y", data.y)
                 loss = None
                 if self.parser_args.loss == "CoxPHLoss":#  or self.parser_args.loss=="NegativeLogLikelihood":
                     loss = self.setup_args.criterion(out, data.y.to(self.device), data.is_censored.to(self.device))  # Compute the loss.    
@@ -334,7 +388,12 @@ class trainer_tester:
                         preds = out.argmax(dim=1)
                         pred_list.extend(preds.cpu().numpy().tolist())
                         true_list.extend(data.y.cpu().numpy().tolist())
-                        loss = self.setup_args.criterion(out, data.y.long().to(self.device))
+                        
+                        if self.num_classes == 1:
+                            loss = self.setup_args.criterion(out, data.y.to(self.device).float().unsqueeze(1))
+                        else:
+                            loss = self.setup_args.criterion(out, data.y.long().to(self.device))
+
                         # Collect probabilities for AUC
                         if out.shape[1] == 1:
                             # Binary classification
@@ -368,14 +427,24 @@ class trainer_tester:
                     pid_list.extend([val for val in data.p_id])
                     img_list.extend([val for val in data.img_id])
                     
-                elif return_pred_df:
+                elif return_pred_df  and self.parser_args.label in ["Relapse","Progression"]:
 
-                    tumor_grade_list.extend([val for val in data.tumor_grade])
+                    # print(data) osmonth=[64], sample_id=[64], img_id=[64], clinical_type=[64], disease_stage=[64]
+
+                    clinical_type_list.extend([val for val in data.clinical_type])
+                    disease_stage_list.extend([val for val in data.disease_stage])
+                    progression_list.extend([val.item() for val in data.y])
+                    osmonth_list.extend([val.item() for val in data.osmonth])
+                    sample_id_list.extend([val for val in data.sample_id])
+                    img_list.extend([val for val in data.img_id])
+                    
+
+                    """tumor_grade_list.extend([val for val in data.tumor_grade])
                     clinical_type_list.extend([val for val in data.clinical_type])
                     osmonth_list.extend([val.item() for val in data.osmonth])
                     relapse_list.extend([val.item() for val in data.y])
                     pid_list.extend([val for val in data.p_id])
-                    img_list.extend([val for val in data.img_id])
+                    img_list.extend([val for val in data.img_id])"""
                     
                     
                 
@@ -394,8 +463,17 @@ class trainer_tester:
                 df = pd.DataFrame(list(zip(pid_list, img_list, true_list, pred_list, tumor_grade_list, clinical_type_list, osmonth_list, censorship_list, label_list)),
                columns =["Patient ID","Image Number", 'True Value', 'Predicted', "Tumor Grade", "Clinical Type", "OS Month", "Censored", "Fold#-Set"])
             else:
-                df = pd.DataFrame(list(zip(pid_list, img_list, true_list, pred_list, tumor_grade_list, clinical_type_list, osmonth_list,  label_list)),
-                columns =["Patient ID","Image Number", 'True Value', 'Predicted', "Tumor Grade", "Clinical Type", "OS Month", "Fold#-Set"])
+                # print("Here1")
+                # df = pd.DataFrame(list(zip(pid_list, img_list, true_list, pred_list, tumor_grade_list, clinical_type_list, osmonth_list,  label_list)),
+                # columns =["Patient ID","Image Number", 'True Value', 'Predicted', "Tumor Grade", "Clinical Type", "OS Month", "Fold#-Set"])
+                """clinical_type_list.extend([val for val in data.clinical_type])
+                    disease_stage_list.extend([val for val in data.disease_stage])
+                    progression_list.extend([val.item() for val in data.y])
+                    osmonth_list.extend([val.item() for val in data.osmonth])
+                    sample_id_list.extend([val for val in data.sample_id])
+                    img_list.extend([val for val in data.img_id])
+                """
+                df = pd.DataFrame(list(zip(sample_id_list, img_list, true_list, pred_list, progression_list, clinical_type_list, osmonth_list,  label_list)), columns =["Sample ID","Image Number", 'True Value', 'Predicted', "Progression", "Clinical Type", "OS Month", "Fold#-Set"])
                 # Add probabilities for AUC
                 if self.label_type == "classification":
                     if hasattr(self, 'train_probabilities'):
@@ -448,12 +526,10 @@ class trainer_tester:
                 # Print model outputs and predictions for the first batch of validation set
                 model = fold_dict["model"]
                 model.eval()
-                with torch.no_grad():
-                    for i, data in enumerate(fold_dict["validation_loader"]):
-                        out = model(data.x.to(self.device), data.edge_index.to(self.device), data.batch.to(self.device))
-                        break
+
                 train_loss = self.test(fold_dict["model"], fold_dict["train_loader"],  fold_dict["fold"])
                 validation_loss, df_epoch_val = self.test(fold_dict["model"], fold_dict["validation_loader"],  fold_dict["fold"], "validation", self.setup_args.plot_result)
+                #print("train_loss", train_loss, "validation_loss", validation_loss, df_epoch_val)
                 # test_loss, df_epoch_test = self.test(fold_dict["model"], fold_dict["test_loader"],  fold_dict["fold"], "test", self.setup_args.plot_result)
                 epoch_val_score = 0.0
                 auc_score = None
@@ -466,8 +542,11 @@ class trainer_tester:
                     if self.label_type == "classification":
                         if self.num_classes == 2 or self.num_classes == 1:
                             # Binary classification
+                            
                             y_true = df_epoch_val["True Value"].values
+                            
                             y_score = df_epoch_val["Probabilities"].values if "Probabilities" in df_epoch_val else None
+                            # print("y_true", y_true, "y_score", y_score)
                             if y_score is None and hasattr(self, 'train_probabilities'):
                                 y_score = self.train_probabilities
                             auc_score = roc_auc_score(y_true, y_score)
@@ -508,6 +587,8 @@ class trainer_tester:
                     fold_val_scores.append(early_stopping.best_eval_score)
                     print("Early stopping the training...")
                     break
+                # break
+            break
 
         average_val_scores = sum(fold_val_scores)/len(fold_val_scores)
         print(f"Average validation score: {sum(fold_val_scores)/len(fold_val_scores)}")
@@ -708,6 +789,167 @@ class trainer_tester:
             writer.writerows(self.results)
             writer.writerows(means)
             writer.writerows(variances)
+
+    def train_val_test_loop(self):
+        """
+        Training, validation, and testing occurs under this function for train/val/test split.
+        """
+        self.results = []
+        fold_val_scores = []
+        fold_results = []
+
+        # Get the train/val/test fold dict (should be the last one added)
+        fold_dict = self.fold_dicts[-1]  # Get the train/val/test split
+        
+        best_val_loss = np.inf
+        early_stopping = EarlyStopping(patience=self.parser_args.patience*2, verbose=True, model_path=self.setup_args.MODEL_PATH)
+
+        print(f"########## Train/Val/Test Split Training ##########")
+        
+        for epoch in (pbar := tqdm(range(self.parser_args.epoch), disable=False)):
+            self.train(fold_dict)
+            
+            model = fold_dict["model"]
+            model.eval()
+
+            # Calculate losses for all three splits
+            train_loss = self.test(fold_dict["model"], fold_dict["train_loader"], fold_dict["fold"])
+            validation_loss, df_epoch_val = self.test(fold_dict["model"], fold_dict["validation_loader"], fold_dict["fold"], "validation", self.setup_args.plot_result)
+            test_loss, df_epoch_test = self.test(fold_dict["model"], fold_dict["test_loader"], fold_dict["fold"], "test", self.setup_args.plot_result)
+            
+            # Calculate validation score
+            epoch_val_score = 0.0
+            auc_score = None
+            if self.parser_args.loss == "CoxPHLoss":
+                epoch_val_score = concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"]) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"])
+            else:
+                correct = (df_epoch_val['True Value'] == df_epoch_val['Predicted']).sum()
+                accuracy = correct / len(df_epoch_val)
+                # AUC Calculation
+                if self.label_type == "classification":
+                    if self.num_classes == 2 or self.num_classes == 1:
+                        # Binary classification
+                        y_true = df_epoch_val["True Value"].values
+                        y_score = df_epoch_val["Probabilities"].values if "Probabilities" in df_epoch_val else None
+                        if y_score is None and hasattr(self, 'train_probabilities'):
+                            y_score = self.train_probabilities
+                        auc_score = roc_auc_score(y_true, y_score)
+                    else:
+                        # Multi-class classification
+                        y_true = df_epoch_val["True Value"].values
+                        y_score = df_epoch_val[[str(i) for i in range(self.num_classes)]].values if all(str(i) in df_epoch_val.columns for i in range(self.num_classes)) else None
+                        if y_score is not None:
+                            auc_score = roc_auc_score(y_true, y_score, multi_class='ovr', average='macro')
+                        else:
+                            auc_score = None
+                epoch_val_score = auc_score
+            
+            # Calculate test score
+            epoch_test_score = 0.0
+            test_auc_score = None
+            if self.parser_args.loss == "CoxPHLoss":
+                epoch_test_score = concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], df_epoch_test["Censored"]) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], df_epoch_test["Censored"])
+            else:
+                correct_test = (df_epoch_test['True Value'] == df_epoch_test['Predicted']).sum()
+                test_accuracy = correct_test / len(df_epoch_test)
+                # Test AUC Calculation
+                if self.label_type == "classification":
+                    if self.num_classes == 2 or self.num_classes == 1:
+                        # Binary classification
+                        y_true_test = df_epoch_test["True Value"].values
+                        y_score_test = df_epoch_test["Probabilities"].values if "Probabilities" in df_epoch_test else None
+                        if y_score_test is not None:
+                            test_auc_score = roc_auc_score(y_true_test, y_score_test)
+                    else:
+                        # Multi-class classification
+                        y_true_test = df_epoch_test["True Value"].values
+                        y_score_test = df_epoch_test[[str(i) for i in range(self.num_classes)]].values if all(str(i) in df_epoch_test.columns for i in range(self.num_classes)) else None
+                        if y_score_test is not None:
+                            test_auc_score = roc_auc_score(y_true_test, y_score_test, multi_class='ovr', average='macro')
+                        else:
+                            test_auc_score = None
+                epoch_test_score = test_auc_score
+            
+            # Print per-epoch metrics
+            if self.label_type == "classification":
+                print(f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {validation_loss:.4f} | Test Loss: {test_loss:.4f} | Val AUC: {epoch_val_score:.4f} | Test AUC: {epoch_test_score:.4f} | Val Acc: {accuracy:.4f} | Test Acc: {test_accuracy:.4f}")
+            else:
+                print(f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {validation_loss:.4f} | Test Loss: {test_loss:.4f} | Val Score: {epoch_val_score:.4f} | Test Score: {epoch_test_score:.4f}")
+
+            fold_dict["scheduler"].step(validation_loss)
+            
+            early_stopping(validation_loss, epoch_val_score, fold_dict["model"], vars(self.parser_args), id_file_name=self.setup_args.id, deg=fold_dict["deg"] if self.parser_args.model in ["PNAConv", "MMAConv", "GMNConv"] else None)
+            if self.label_type == "classification":
+                pbar.set_description(f"Train: {train_loss:.2f} Val: {validation_loss:.2f} Test: {test_loss:.2f} Val AUC: {epoch_val_score:.3f} Test AUC: {epoch_test_score:.3f} Best val: {early_stopping.best_eval_score:.3f} Patience: {early_stopping.counter}")
+            else:
+                pbar.set_description(f"Train: {train_loss:.2f} Val: {validation_loss:.2f} Test: {test_loss:.2f} Val Score: {epoch_val_score:.3f} Test Score: {epoch_test_score:.3f} Best val: {early_stopping.best_eval_score:.3f} Patience: {early_stopping.counter}")
+
+            if early_stopping.early_stop or epoch == self.parser_args.epoch-1:
+                # Save best metrics
+                best_fold_loss = early_stopping.val_loss_min
+                best_fold_score = early_stopping.best_eval_score
+                best_fold_auc = auc_score if 'auc_score' in locals() else None
+                
+                # Store results for this split
+                if self.label_type == "classification":
+                    # Calculate final test metrics
+                    correct_test = (df_epoch_test['True Value'] == df_epoch_test['Predicted']).sum()
+                    test_accuracy = correct_test / len(df_epoch_test)
+                    
+                    # Calculate test AUC if applicable
+                    test_auc = None
+                    if self.num_classes == 2 or self.num_classes == 1:
+                        y_true_test = df_epoch_test["True Value"].values
+                        y_score_test = df_epoch_test["Probabilities"].values if "Probabilities" in df_epoch_test else None
+                        if y_score_test is not None:
+                            test_auc = roc_auc_score(y_true_test, y_score_test)
+                    elif self.num_classes > 2:
+                        y_true_test = df_epoch_test["True Value"].values
+                        y_score_test = df_epoch_test[[str(i) for i in range(self.num_classes)]].values if all(str(i) in df_epoch_test.columns for i in range(self.num_classes)) else None
+                        if y_score_test is not None:
+                            test_auc = roc_auc_score(y_true_test, y_score_test, multi_class='ovr', average='macro')
+                    
+                    self.results.append([fold_dict['fold'], train_loss, validation_loss, test_loss, test_accuracy, test_auc, best_fold_auc])
+                else:
+                    # Regression case
+                    if self.parser_args.loss == "CoxPHLoss":
+                        test_ci = concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], df_epoch_test["Censored"])
+                        self.results.append([fold_dict['fold'], train_loss, validation_loss, test_loss, test_ci])
+                    else:
+                        # Calculate regression metrics
+                        test_r2 = r_squared_score(df_epoch_test['True Value'], df_epoch_test['Predicted'])
+                        test_mse = mse(df_epoch_test['True Value'], df_epoch_test['Predicted'])
+                        test_rmse = rmse(df_epoch_test['True Value'], df_epoch_test['Predicted'])
+                        self.results.append([fold_dict['fold'], train_loss, validation_loss, test_loss, test_r2, test_mse, test_rmse])
+                
+                print("Best model lr:", fold_dict["optimizer"].param_groups[0]["lr"])
+                self.parser_args.best_epoch = epoch
+                fold_val_scores.append(early_stopping.best_eval_score)
+                print("Early stopping the training...")
+                break
+
+        # Save results
+        self.parser_args.ci_score = fold_val_scores[0] if fold_val_scores else 0.0
+        self.parser_args.fold_ci_scores = fold_val_scores
+        custom_tools.save_dict_as_json(vars(self.parser_args), self.setup_args.id, self.setup_args.MODEL_PATH)
+        
+        # Save model
+        if not self.parser_args.fold:
+            custom_tools.save_model(model=fold_dict["model"], fileName=self.setup_args.id, mode="SD", path=self.setup_args.MODEL_PATH)
+            if self.parser_args.model == "PNAConv":
+                custom_tools.save_pickle(fold_dict["deg"], f"{self.setup_args.id}_deg.pckl", self.setup_args.MODEL_PATH)
+        
+        # Save detailed results
+        self.save_results()
+        
+        # Save test predictions
+        if self.label_type == "regression":
+            df_epoch_test.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_test_predictions.csv"), index=False)
+        else:
+            df_epoch_test.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_test_predictions.csv"), index=False)
+        
+        print(f"Train/Val/Test training completed!")
+        print(f"Average validation score: {fold_val_scores[0]}")
 
 
     # python train_test_controller.py --model PNAConv --lr 0.001 --bs 32 --dropout 0.0 --epoch 1000 --num_of_gcn_layers 2 --num_of_ff_layers 1 --gcn_h 128 --fcl 256 --en best_n_fold_17-11-2022 --weight_decay 0.0001 --factor 0.8 --patience 5 --min_lr 2e-05 --aggregators sum max --no-fold --label OSMonth --loss CoxPHLoss
