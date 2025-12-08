@@ -1,7 +1,0 @@
-{
-    "esbonio.server.enabled": true,
-    "workbench.colorCustomizations": {
-        "editorUnnecessaryCode.border": "#f9d82f"
-      },
-      "python.analysis.typeCheckingMode": "basic"
-}
