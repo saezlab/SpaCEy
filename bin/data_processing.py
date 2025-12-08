@@ -543,6 +543,6 @@ def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT
     # df_cell_count = get_cell_count_df(CELL_COUNT_THR, path=data_path)
     print(RAW_DATA_PATH)
     print("Creating graphs...")
-    create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "sample_id", pid_col = "sample_id",  x_loc ="Location_Center_X", y_loc = "Location_Center_Y", divide_sample=True,  plot=False, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
+    create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "sample_id", pid_col = "sample_id",  x_loc ="Location_Center_X", y_loc = "Location_Center_Y", divide_sample=False,  plot=False, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
 
 # data_processing_lung_pipeline("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/raw/merged_preprocessed_dataset.csv")

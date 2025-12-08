@@ -1,4 +1,4 @@
-name: py_gem_2
+name: py_gem_3
 channels:
   - defaults
 dependencies:

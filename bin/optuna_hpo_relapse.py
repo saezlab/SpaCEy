@@ -43,7 +43,7 @@ def run_training_with_params(params):
         "--gcn_h", str(params["gcn_h"]),
         "--gpu_id", "0",
         "--heads", str(params["heads"]),
-        "--loss", "NegativeLogLikelihood",
+        "--loss", "BCEWithLogitsLoss",
         "--lr", str(params["lr"]),
         "--min_lr", str(params["min_lr"]),
         "--model", "GATV2",

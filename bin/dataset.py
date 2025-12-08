@@ -119,16 +119,16 @@ class TissueDataset(InMemoryDataset):
                             
                             # print(feature_arr)
                             # print(clinical_info_dict)
-                            data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), y=y_val, osmonth=clinical_info_dict["OSmonth"], clinical_type=str(clinical_info_dict["clinical_type"]), treatment=clinical_info_dict["treatment"], disease_stage=clinical_info_dict["DiseaseStage"],  tumor_grade=str(clinical_info_dict["grade"]), img_id=img, p_id=pid ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["diseasestatus"], dfs_month=clinical_info_dict["DFSmonth"], is_censored=censored, ct_class = ct_class_arr) # ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["disease_status"], dfs_month=clinical_info_dict["DFSmonth"]
+                            data = Data(x=torch.tensor(feature_arr, dtype=torch.float32), edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(), pos=torch.tensor(coordinates_arr, dtype=torch.float32), y=y_val, osmonth=clinical_info_dict["OSmonth"], clinical_type=str(clinical_info_dict["clinical_type"]), treatment=clinical_info_dict["treatment"], disease_stage=clinical_info_dict["DiseaseStage"],  tumor_grade=str(clinical_info_dict["grade"]), img_id=img, p_id=pid ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["diseasestatus"], dfs_month=clinical_info_dict["DFSmonth"], is_censored=censored, ct_class = ct_class_arr) # ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["disease_status"], dfs_month=clinical_info_dict["DFSmonth"]
                             # data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), y=np.log(clinical_info_dict["OSmonth"]*4+1.1), osmonth=clinical_info_dict["OSmonth"], clinical_type=clinical_info_dict["clinical_type"], tumor_grade=clinical_info_dict["grade"], img_id=img, p_id=pid)
                             # data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), y=round(clinical_info_dict["OSmonth"]/12.0,3), osmonth=clinical_info_dict["OSmonth"], clinical_type=clinical_info_dict["clinical_type"], tumor_grade=clinical_info_dict["grade"], img_id=img, p_id=pid)
                         else:
                             y_val = clinical_info_dict[self.wanted_label]
                             if self.wanted_label == "tumor_grade":
                                 y_val = int(clinical_info_dict["Grade"]) - 1
-                                data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), y=torch.tensor(y_val, dtype=torch.long), osmonth=clinical_info_dict["OS"], clinical_type=str(clinical_info_dict["Typ"]), disease_stage=clinical_info_dict["Stage"],  tumor_grade=clinical_info_dict["Grade"], img_id=img, p_id=pid ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["diseasestatus"], dfs_month=clinical_info_dict["DFS"], ct_class = ct_class_arr)
+                                data = Data(x=torch.tensor(feature_arr, dtype=torch.float32), edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(), pos=torch.tensor(coordinates_arr, dtype=torch.float32), y=torch.tensor(y_val, dtype=torch.long), osmonth=clinical_info_dict["OS"], clinical_type=str(clinical_info_dict["Typ"]), disease_stage=clinical_info_dict["Stage"],  tumor_grade=clinical_info_dict["Grade"], img_id=img, p_id=pid ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["diseasestatus"], dfs_month=clinical_info_dict["DFS"], ct_class = ct_class_arr)
                             else:
-                                data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), y=torch.Tensor([y_val]), osmonth=clinical_info_dict["OS"], clinical_type=str(clinical_info_dict["Typ"]), disease_stage=clinical_info_dict["Stage"],  tumor_grade=clinical_info_dict["Grade"], img_id=img, p_id=pid ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["diseasestatus"], dfs_month=clinical_info_dict["DFS"], ct_class = ct_class_arr) # ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["disease_status"], dfs_month=clinical_info_dict["DFSmonth"]
+                                data = Data(x=torch.tensor(feature_arr, dtype=torch.float32), edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(), pos=torch.tensor(coordinates_arr, dtype=torch.float32), y=torch.tensor([y_val]), osmonth=clinical_info_dict["OS"], clinical_type=str(clinical_info_dict["Typ"]), disease_stage=clinical_info_dict["Stage"],  tumor_grade=clinical_info_dict["Grade"], img_id=img, p_id=pid ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["diseasestatus"], dfs_month=clinical_info_dict["DFS"], ct_class = ct_class_arr) # ,age=clinical_info_dict["age"], disease_status=clinical_info_dict["disease_status"], dfs_month=clinical_info_dict["DFSmonth"]
                     
                     data_list.append(data)
                     count+=1
@@ -216,9 +216,9 @@ class LungDataset(InMemoryDataset):
 
                 if self.wanted_label == "tumor_grade":
                     y_val = int(clinical_info_dict["Grade"]) - 1
-                    data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), 
-                                edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), 
-                                pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), 
+                    data = Data(x=torch.tensor(feature_arr, dtype=torch.float32), 
+                                edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(), 
+                                pos=torch.tensor(coordinates_arr, dtype=torch.float32), 
                                 y=torch.tensor(y_val, dtype=torch.long), 
                                 osmonth=clinical_info_dict["OS"], 
                                 clinical_type=str(clinical_info_dict["Typ"]), 
@@ -236,22 +236,24 @@ class LungDataset(InMemoryDataset):
                         # print("y_val", type(y_val))
                         #  "Sex","Age","BMI","Smoking Status","Pack Years","Stage","Progression","Death","Survival or loss (years)","Predominant histological pattern"
                         # print("clinical_info_dict", clinical_info_dict)
-                        data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), 
-                                    edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), 
-                                    pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), 
+                        #print(feature_arr)
+                        data = Data(x=torch.tensor(feature_arr, dtype=torch.float32), 
+                                    edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(), 
+                                    pos=torch.tensor(coordinates_arr, dtype=torch.float32), 
                                     y=torch.tensor(y_val, dtype=torch.long), 
                                     osmonth=clinical_info_dict["Survival or loss (years)"], 
                                     sample_id= str(img_pid),
                                     img_id= str(img_pid),
                                     clinical_type=str(clinical_info_dict["Predominant histological pattern"]), 
-                                    disease_stage=clinical_info_dict["Stage"])
+                                    disease_stage=clinical_info_dict["Stage"],
+                                    ct_class = ct_class_arr )
                 else:
                     y_val = clinical_info_dict[self.wanted_label]
                     # print("y_val", y_val, torch.Tensor([y_val]))
-                    data = Data(x=torch.from_numpy(feature_arr).type(torch.FloatTensor), 
-                                edge_index=torch.from_numpy(edge_index_arr).type(torch.LongTensor).t().contiguous(), 
-                                pos=torch.from_numpy(coordinates_arr).type(torch.FloatTensor), 
-                                y= torch.Tensor([y_val]).type(torch.LongTensor),
+                    data = Data(x=torch.tensor(feature_arr, dtype=torch.float32), 
+                                edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(), 
+                                pos=torch.tensor(coordinates_arr, dtype=torch.float32), 
+                                y= torch.tensor([y_val], dtype=torch.long),
                                 osmonth=clinical_info_dict["OS"], 
                                 clinical_type=str(clinical_info_dict["Typ"]), 
                                 disease_stage=clinical_info_dict["Stage"],  

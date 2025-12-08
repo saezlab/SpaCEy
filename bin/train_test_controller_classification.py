@@ -5,7 +5,7 @@ import os
 import custom_tools
 from types import SimpleNamespace
 from loss import CoxPHLoss, NegativeLogLikelihood
-from trainer_tester import trainer_tester
+from trainer_tester_classification import trainer_tester
 
 
 custom_tools.set_seeds(42, deterministic=False)
@@ -41,8 +41,11 @@ elif parser_args.loss== "NegativeLogLikelihood":
     print("Loss is NegativeLogLikelihood")
     # setup_args.criterion = NegativeLogLikelihood()
     setup_args.criterion = torch.nn.BCEWithLogitsLoss()
+elif parser_args.loss== "BCEWithLogitsLoss":
+    print("Loss is BCEWithLogitsLoss")
+    setup_args.criterion = torch.nn.BCEWithLogitsLoss()
 else:
-    raise Exception("Loss function should be MSE, Huber, CoxPHLoss or NegativeLogLikelihood...")
+    raise Exception("Loss function should be MSE, Huber, CoxPHLoss, NegativeLogLikelihood, or BCEWithLogitsLoss...")
 
 setup_args.print_every_epoch = 10
 setup_args.plot_result = True

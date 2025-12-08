@@ -50,8 +50,10 @@ class CustomGCN(torch.nn.Module):
         if self.label_type == "regression":
             self.num_ff_final = 1
         elif self.label_type == "classification":
-            self.num_classes = self.pars["num_classes"]
-            self.num_ff_final = self.num_classes
+            self.num_classes = 1
+            # self.pars["num_classes"]
+            self.num_ff_final = 1
+            # self.num_classes
 
         # Extracting generic parameters
         self.num_node_features = self.pars["num_node_features"]
@@ -70,8 +72,8 @@ class CustomGCN(torch.nn.Module):
         if self.label_type == "regression":
             self.num_ff_final = 1
         else:
-            self.num_classes = self.pars["num_classes"]
-            self.num_ff_final = self.num_classes
+            self.num_classes = 1 # self.pars["num_classes"]
+            self.num_ff_final = 1 # self.num_classes
 
         # Setting generic model parameters
         model_pars_head = {

@@ -125,44 +125,25 @@ custom_tools.set_seeds(seed=42, deterministic=True)
 explainer = Custom_Explainer(model, args.dataset_name, dataset, args.exp_name, args.job_id, seed=random_seed)
 
 
-for lr in [0.1]:# , 0.01, 0.001, 0.0001]:
-    edge_idx = explainer.explain(epoch=100, lr=lr)
+# Per-sample learning rate selection with multiple seeds
+# For each sample:
+#   1. For each LR, try all seeds and calculate average score across seeds
+#   2. Select LR with best average score
+#   3. Use best seed for the selected LR
+#   4. Save only the best LR-seed combination
+"""results = explainer.explain_with_evaluation(
+    epoch=100, 
+    lr_list=[0.1, 0.01, 0.001, 0.0001], 
+    seed_list=[21, 42, 123, 456, 1024],  # Multiple seeds - scores averaged across seeds for each LR
+    return_type="binary_classification"
+)"""
 
-
-"""
-num_of_train = int(len(dataset)*0.80)
-num_of_val = int(len(dataset)*0.10)
-
-train_dataset = dataset[:num_of_train]
-validation_dataset = dataset[num_of_train:num_of_train+num_of_val]
-test_dataset = dataset[num_of_train+num_of_val:]
-
-test_graph = test_dataset[0]
-with open(os.path.join(RAW_DATA_PATH, f'{test_graph.img_id}_{test_graph.p_id}_coordinates.pickle'), 'rb') as handle:
-    coordinates_arr = pickle.load(handle)"""
-
-# plotting.plot_khop(test_dataset[0], "../plots/subgraphs", f"{test_graph.img_id}_{test_graph.p_id}", coordinates_arr,)
-
-
-"""random_seed = 42 # , 21, 1, 12, 123, 1234, 2, 23, 234, 2345]
-all_edges_list = []
-custom_tools.set_seeds(seed=42, deterministic=True)
-explainer = Custom_Explainer(model, args.dataset_name, dataset, args.exp_name, args.job_id, seed=random_seed)
-
-
-for lr in [0.1]:# , 0.01, 0.001, 0.0001]:
-    edge_idx = explainer.explain(epoch=100, lr=lr)"""
-    # all_edges_list.append([val.item() for val in list(edge_idx.cpu())])"""
-"""
-import pickle
-result = np.logical_and.reduce(all_edges_list)
-test_graph = test_dataset[0]
-with open(os.path.join(RAW_DATA_PATH, f'{test_graph.img_id}_{test_graph.p_id}_coordinates.pickle'), 'rb') as handle:
-    coordinates_arr = pickle.load(handle)
-
-plotting.plot_subgraph(test_graph, "../plots/subgraphs", f"{test_graph.img_id}_{test_graph.p_id}_intersection", coordinates_arr, result )
-print(np.unique(result, return_counts=True))
-"""
+for lr in [0.1, 0.01, 0.001, 0.0001]:
+    random_seed = 42 # , 21, 1, 12, 123, 1234, 2, 23, 234, 2345]
+    all_edges_list = []
+    custom_tools.set_seeds(seed=42, deterministic=True)
+    explainer = Custom_Explainer(model, args.dataset_name, dataset, args.exp_name, args.job_id, seed=random_seed)
+    edge_idx = explainer.explain(epoch=100, lr=lr, return_type="binary_classification")
 
 # python explain_driver.py --dataset_name JacksonFischer --exp_name "GATV2_NegativeLogLikelihood_month_04-12-2023" --job_id YyroGgMa_H4xn_ctP3C5Zw
 

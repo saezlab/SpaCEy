@@ -1,4 +1,6 @@
 import os
+import sys
+import types
 import torch
 import json
 import pickle
@@ -18,6 +20,25 @@ from torch_geometric import utils
 from data_preparation import get_basel_zurich_staining_panel
 from sklearn.model_selection import GroupKFold
 from sklearn.model_selection import KFold, StratifiedKFold
+
+# ---------------------------------------------------------------------------
+# NumPy 2.x pickles may reference the private module path `numpy._core.numeric`.
+# Older NumPy releases (<2.0) do not ship this module, which causes a
+# ModuleNotFoundError during unpickling.  Provide a forward-compatible shim so
+# that pickles created with newer NumPy versions remain loadable without
+# forcing an environment-wide upgrade.
+# ---------------------------------------------------------------------------
+try:
+    import numpy._core.numeric  # type: ignore[attr-defined]
+except ModuleNotFoundError:
+    import numpy.core.numeric as _numeric
+
+    # `numpy._core` is treated as a namespace package in newer NumPy versions.
+    # We emulate the minimal structure needed by the pickled objects.
+    _core_module = types.ModuleType("numpy._core")
+    _core_module.numeric = _numeric
+    sys.modules.setdefault("numpy._core", _core_module)
+    sys.modules["numpy._core.numeric"] = _numeric
 
 S_PATH = "/".join(os.path.realpath(__file__).split(os.sep)[:-1])
 OUT_DATA_PATH = os.path.join(S_PATH, "../data", "out_data")
@@ -635,16 +656,19 @@ def get_all_k_hop_node_scores(test_graph, edgeid_to_mask_dict, n_of_hops):
 
 def convert_graph_to_anndata(graph, node_id_to_importance_dict, dataset_name, imp_quant_thr=0.90):
     adata = None
+    print(graph)
     positions = np.array(graph.pos)
     features = np.array(graph.x)
     clinical_type = graph.clinical_type
     img_id= graph.img_id
-    p_id= graph.p_id
-    tumor_grade= graph.tumor_grade
+    if dataset_name!="Lung":
+        p_id= graph.p_id
+        tumor_grade= graph.tumor_grade
+        cell_type = [str(val[0]) for val in graph.ct_class]
+        ct_general = [str(val[1]) for val in graph.ct_class]
     osmonth= graph.osmonth
     print(graph)
-    cell_type = [str(val[0]) for val in graph.ct_class]
-    ct_general = [str(val[1]) for val in graph.ct_class]
+    
 
     
     obs = [str(val) for val in list(range(graph.x.shape[0]))]
@@ -662,9 +686,11 @@ def convert_graph_to_anndata(graph, node_id_to_importance_dict, dataset_name, im
     adata.var_names = var
     adata.obs["clinical_type"] = clinical_type
     adata.obs["img_id"] = str(img_id)
-    adata.obs["p_id"] = p_id
-    
-    adata.obs["tumor_grade"] = str(tumor_grade)
+    if dataset_name!="Lung":
+        adata.obs["p_id"] = p_id
+        adata.obs["tumor_grade"] = str(tumor_grade)
+        adata.obs["cell_type"] = cell_type
+        adata.obs["ct_general"] = ct_general
     
     adata.obs["osmonth"] = float(osmonth)
     
@@ -678,8 +704,7 @@ def convert_graph_to_anndata(graph, node_id_to_importance_dict, dataset_name, im
     importances_hard = pd.Series(importances_hard, dtype="category")
     # print(importances_hard)
     adata.obs["importance_hard"] = importances_hard.values
-    adata.obs["cell_type"] = cell_type
-    adata.obs["class"] = ct_general
+    
     # print(adata.obs)
     # sc.tl.rank_genes_groups(adata, groupby="importance_hard", method='wilcoxon', key_added = f"wilcoxon")
     # sc.pl.rank_genes_groups(adata, n_genes=25, sharey=False, key=f"wilcoxon", show=True, groupby="importance_hard", save="important_vs_unimportant")
@@ -747,7 +772,8 @@ def get_gene_list(dataset_name="JacksonFischer"):
         'DNA1', 'DNA2', 'H3K27me3', 'CK5', 'Fibronectin'
     ]
         lst_genes = mean_ion_count_columns
-    
+    elif dataset_name=="Lung":
+        lst_genes = ["CD117", "CD11c", "CD14", "CD163", "CD16", "CD20", "CD31", "CD3", "CD4", "CD68", "CD8a", "CD94", "DNA1", "FoxP3", "HLA-DR", "Histone H3", "MPO", "Pancytokeratin"]
     return lst_genes
 
 
@@ -1060,6 +1086,324 @@ def create_stratified_cv_folds_lung_dataset(dataset, clinical_outcome_label, n_f
 
 
     return samplers
+
+
+def create_stratified_cv_folds_lung_dataset_oversampling(dataset, clinical_outcome_label, n_folds=5, random_state=42):
+    """
+    Create stratified cross-validation folds with random oversampling to balance classes.
+    Uses RandomOverSampler to achieve equal number of samples for each class during training.
+    
+    Parameters:
+    -----------
+    dataset : PyTorch Dataset
+        The dataset containing samples with clinical outcomes
+    clinical_outcome_label : str
+        The clinical outcome of interest (e.g., "Progression")
+    n_folds : int, default=5
+        Number of cross-validation folds
+    random_state : int, default=42
+        Random seed for reproducibility
+        
+    Returns:
+    --------
+    list : List of tuples containing (fold_number, train_sampler, validation_sampler)
+           where samplers are PyTorch SubsetRandomSampler objects
+    """
+    from imblearn.over_sampling import RandomOverSampler
+    import numpy as np
+    
+    # Extract sample information
+    sample_data = []
+    
+    for idx, data in enumerate(dataset):
+        sample_id = data.sample_id
+        # Extract patient ID using the helper function
+        patient_id = extract_patient_id(sample_id)
+        
+        sample_data.append({
+            'sample_idx': idx,
+            'sample_id': sample_id,
+            'patient_id': patient_id,
+            'outcome': data.y.item() if hasattr(data.y, 'item') else data.y
+        })
+    
+    # Convert to DataFrame for easier manipulation
+    df = pd.DataFrame(sample_data)
+    
+    # Count class distribution
+    class_counts = df['outcome'].value_counts()
+    print(f"Original class distribution:")
+    for class_val, count in class_counts.items():
+        print(f"  Class {class_val}: {count} samples")
+    
+    # Create patient-level stratification
+    # Get unique patients and their outcomes
+    patient_outcomes = df.groupby('patient_id')['outcome'].first().reset_index()
+    
+    # Create stratified folds at patient level
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+    
+    samplers = []
+    for fold_idx, (train_patient_indices, val_patient_indices) in enumerate(skf.split(patient_outcomes['patient_id'], patient_outcomes['outcome'])):
+        
+        # Get patient IDs for this fold
+        train_patients = patient_outcomes.iloc[train_patient_indices]['patient_id'].tolist()
+        val_patients = patient_outcomes.iloc[val_patient_indices]['patient_id'].tolist()
+        
+        # Get sample indices for training and validation
+        train_sample_indices = df[df['patient_id'].isin(train_patients)]['sample_idx'].tolist()
+        val_sample_indices = df[df['patient_id'].isin(val_patients)]['sample_idx'].tolist()
+        
+        # Get training data for oversampling
+        train_df = df[df['sample_idx'].isin(train_sample_indices)].copy()
+        
+        # Prepare data for RandomOverSampler
+        # We need to create features for oversampling - we'll use sample indices as features
+        X_train = train_df[['sample_idx']].values
+        y_train = train_df['outcome'].values
+        
+        # Apply RandomOverSampler
+        ros = RandomOverSampler(random_state=random_state)
+        X_resampled, y_resampled = ros.fit_resample(X_train, y_train)
+        
+        # Extract the resampled sample indices
+        resampled_sample_indices = X_resampled.flatten().tolist()
+        
+        # Create samplers
+        train_sampler = torch.utils.data.SubsetRandomSampler(resampled_sample_indices)
+        val_sampler = torch.utils.data.SubsetRandomSampler(val_sample_indices)
+        
+        samplers.append((fold_idx, train_sampler, val_sampler))
+        
+        # Print fold statistics
+        print(f"\nFold {fold_idx}:")
+        print(f"  Original training: {len(train_sample_indices)} samples from {len(train_patients)} patients")
+        print(f"  After oversampling: {len(resampled_sample_indices)} samples")
+        print(f"  Validation: {len(val_sample_indices)} samples from {len(val_patients)} patients")
+        
+        # Check class distribution after oversampling
+        resampled_outcomes = pd.Series(y_resampled)
+        val_outcomes = df[df['sample_idx'].isin(val_sample_indices)]['outcome']
+        
+        print(f"  Training class distribution (after oversampling): {resampled_outcomes.value_counts().to_dict()}")
+        print(f"  Validation class distribution: {val_outcomes.value_counts().to_dict()}")
+    
+    return samplers
+
+
+def create_stratified_cv_folds_lung_dataset_balanced_validation(dataset, clinical_outcome_label, n_folds=5, random_state=42):
+    """
+    Create stratified cross-validation folds with random oversampling for training set
+    and balanced validation set ensuring equal representation of each class.
+    
+    Parameters:
+    -----------
+    dataset : PyTorch Dataset
+        The dataset containing samples with clinical outcomes
+    clinical_outcome_label : str
+        The clinical outcome of interest (e.g., "Progression")
+    n_folds : int, default=5
+        Number of cross-validation folds
+    random_state : int, default=42
+        Random seed for reproducibility
+        
+    Returns:
+    --------
+    list : List of tuples containing (fold_number, train_sampler, validation_sampler, train_patients, val_patients)
+           where samplers are PyTorch SubsetRandomSampler objects and patient lists contain patient IDs
+    """
+    from imblearn.over_sampling import RandomOverSampler
+    import numpy as np
+    
+    # Extract sample information
+    sample_data = []
+    
+    for idx, data in enumerate(dataset):
+        sample_id = data.sample_id
+        # Extract patient ID using the helper function
+        patient_id = extract_patient_id(sample_id)
+        
+        sample_data.append({
+            'sample_idx': idx,
+            'sample_id': sample_id,
+            'patient_id': patient_id,
+            'outcome': data.y.item() if hasattr(data.y, 'item') else data.y
+        })
+    
+    # Convert to DataFrame for easier manipulation
+    df = pd.DataFrame(sample_data)
+    
+    # Count class distribution
+    class_counts = df['outcome'].value_counts()
+    print(f"Original class distribution:")
+    for class_val, count in class_counts.items():
+        print(f"  Class {class_val}: {count} samples")
+    
+    # Create patient-level stratification
+    # Get unique patients and their outcomes
+    patient_outcomes = df.groupby('patient_id')['outcome'].first().reset_index()
+    
+    # Create stratified folds at patient level
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+    
+    samplers = []
+    for fold_idx, (train_patient_indices, val_patient_indices) in enumerate(skf.split(patient_outcomes['patient_id'], patient_outcomes['outcome'])):
+        
+        # Get patient IDs for this fold
+        train_patients = patient_outcomes.iloc[train_patient_indices]['patient_id'].tolist()
+        val_patients = patient_outcomes.iloc[val_patient_indices]['patient_id'].tolist()
+        
+        # Get sample indices for training and validation
+        train_sample_indices = df[df['patient_id'].isin(train_patients)]['sample_idx'].tolist()
+        val_sample_indices = df[df['patient_id'].isin(val_patients)]['sample_idx'].tolist()
+        
+        # Get training data for oversampling
+        train_df = df[df['sample_idx'].isin(train_sample_indices)].copy()
+        
+        # Prepare data for RandomOverSampler
+        # We need to create features for oversampling - we'll use sample indices as features
+        X_train = train_df[['sample_idx']].values
+        y_train = train_df['outcome'].values
+        
+        # Apply RandomOverSampler
+        ros = RandomOverSampler(random_state=random_state)
+        X_resampled, y_resampled = ros.fit_resample(X_train, y_train)
+        
+        # Extract the resampled sample indices
+        resampled_sample_indices = X_resampled.flatten().tolist()
+        
+        # Balance validation set to have equal representation of each class
+        val_df = df[df['sample_idx'].isin(val_sample_indices)].copy()
+        val_class_counts = val_df['outcome'].value_counts()
+        
+        # Find the minimum count among classes in validation set
+        min_class_count = val_class_counts.min()
+        
+        # Sample equal number of samples from each class for validation
+        balanced_val_indices = []
+        for class_val in val_class_counts.index:
+            class_samples = val_df[val_df['outcome'] == class_val]['sample_idx'].tolist()
+            # Randomly sample min_class_count samples from this class
+            np.random.seed(random_state + fold_idx)  # Different seed for each fold
+            if len(class_samples) >= min_class_count:
+                selected_samples = np.random.choice(class_samples, min_class_count, replace=False)
+            else:
+                # If we don't have enough samples, use all available (with replacement if needed)
+                selected_samples = np.random.choice(class_samples, min_class_count, replace=True)
+            balanced_val_indices.extend(selected_samples)
+        
+        # Create samplers
+        train_sampler = torch.utils.data.SubsetRandomSampler(resampled_sample_indices)
+        val_sampler = torch.utils.data.SubsetRandomSampler(balanced_val_indices)
+        
+        samplers.append((fold_idx, train_sampler, val_sampler, train_patients, val_patients))
+        
+        # Print fold statistics
+        print(f"\nFold {fold_idx}:")
+        print(f"  Original training: {len(train_sample_indices)} samples from {len(train_patients)} patients")
+        print(f"  After oversampling: {len(resampled_sample_indices)} samples")
+        print(f"  Original validation: {len(val_sample_indices)} samples from {len(val_patients)} patients")
+        print(f"  Balanced validation: {len(balanced_val_indices)} samples")
+        
+        # Check class distribution after oversampling and balancing
+        resampled_outcomes = pd.Series(y_resampled)
+        balanced_val_outcomes = df[df['sample_idx'].isin(balanced_val_indices)]['outcome']
+        
+        print(f"  Training class distribution (after oversampling): {resampled_outcomes.value_counts().to_dict()}")
+        print(f"  Validation class distribution (balanced): {balanced_val_outcomes.value_counts().to_dict()}")
+    
+    return samplers
+
+
+def create_stratified_fulldataset_lung_dataset_balanced_validation(dataset, clinical_outcome_label, random_state=42):
+    """
+    Create an oversampled sampler for the full Lung dataset to balance classes while
+    respecting patient-level grouping. This is intended for full-training scenarios
+    where all available samples are used for training.
+
+    Parameters:
+    -----------
+    dataset : PyTorch Dataset
+        The dataset containing samples with clinical outcomes.
+    clinical_outcome_label : str
+        The clinical outcome of interest (e.g., "Progression").
+    random_state : int, default=42
+        Random seed for reproducibility.
+
+    Returns:
+    --------
+    dict : A dictionary containing the oversampled sampler and class distribution
+           metadata:
+           {
+               'train_sampler': SubsetRandomSampler,
+               'resampled_indices': list[int],
+               'original_class_distribution': dict,
+               'resampled_class_distribution': dict
+           }
+    """
+
+    from imblearn.over_sampling import RandomOverSampler
+
+    sample_data = []
+
+    for idx, data in enumerate(dataset):
+        sample_id = getattr(data, 'sample_id', str(idx))
+        if isinstance(sample_id, torch.Tensor):
+            sample_id = sample_id.item()
+        sample_id = str(sample_id)
+        patient_id = extract_patient_id(sample_id)
+
+        outcome = data.y.item() if hasattr(data.y, 'item') else data.y
+        if isinstance(outcome, torch.Tensor):
+            outcome = outcome.item()
+
+        sample_data.append({
+            'sample_idx': idx,
+            'sample_id': sample_id,
+            'patient_id': patient_id,
+            'outcome': outcome
+        })
+
+    df = pd.DataFrame(sample_data)
+
+    class_counts = df['outcome'].value_counts().to_dict()
+    print("Full dataset class distribution:")
+    for class_val, count in class_counts.items():
+        print(f"  Class {class_val}: {count} samples")
+
+    if len(class_counts) <= 1:
+        print("Only one class present; oversampling skipped.")
+        indices = df['sample_idx'].tolist()
+        sampler = torch.utils.data.SubsetRandomSampler(indices)
+        return {
+            'train_sampler': sampler,
+            'resampled_indices': indices,
+            'original_class_distribution': class_counts,
+            'resampled_class_distribution': class_counts
+        }
+
+    X = df[['sample_idx']].values
+    y = df['outcome'].values
+
+    ros = RandomOverSampler(random_state=random_state)
+    X_resampled, y_resampled = ros.fit_resample(X, y)
+
+    resampled_sample_indices = X_resampled.flatten().tolist()
+    resampled_distribution = pd.Series(y_resampled).value_counts().to_dict()
+
+    print("After oversampling full dataset:")
+    for class_val, count in resampled_distribution.items():
+        print(f"  Class {class_val}: {count} samples")
+
+    train_sampler = torch.utils.data.SubsetRandomSampler(resampled_sample_indices)
+
+    return {
+        'train_sampler': train_sampler,
+        'resampled_indices': resampled_sample_indices,
+        'original_class_distribution': class_counts,
+        'resampled_class_distribution': resampled_distribution
+    }
+
 
 def get_train_val_test_split_by_pid(dataset, dataset_name):
     import pandas as pd

@@ -9,7 +9,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from torch_geometric.explain import Explainer, GNNExplainer
 from data_processing import OUT_DATA_PATH
-import anndata as ad
+# import anndata as ad
 import pytorch_lightning as pl
 
 
@@ -43,7 +43,7 @@ class Custom_Explainer:
     def explain(self,lr: float=0.1,  epoch: int=100, return_type: str = "regression", feat_mask_type: str = "feature"):
         
         
-        gene_list = custom_tools.get_gene_list()
+        gene_list = custom_tools.get_gene_list(self.dataset_name)
         print(gene_list)
         adata_concat = []
         count = 0
@@ -56,12 +56,15 @@ class Custom_Explainer:
             node_mask_type='attributes',
             edge_mask_type='object',
             model_config=dict(
-                mode='regression',
+                mode= return_type,
                 task_level='graph',
                 return_type='raw', 
             ),
             )
-            with open(os.path.join(self.RAW_DATA_PATH, f'{test_graph.img_id}_{test_graph.p_id}_coordinates.pickle'), 'rb') as handle:
+            print(test_graph)
+            # For jackson fischer dataset
+            #with open(os.path.join(self.RAW_DATA_PATH, f'{test_graph.img_id}_{test_graph.p_id}_coordinates.pickle'), 'rb') as handle:
+            with open(os.path.join(self.RAW_DATA_PATH, f'{test_graph.img_id}_coordinates.pickle'), 'rb') as handle:
                 coordinates_arr = pickle.load(handle)
         
             # Generate the explanation for a particular graph:
@@ -74,15 +77,19 @@ class Custom_Explainer:
             genename_to_nodeid_dict = dict()
 
             for col_ind, gene_name in enumerate(gene_list):
+                # print(col_ind, gene_name)
                 genename_to_nodeid_dict[gene_name] = dict()
                 for node_id, val in enumerate(test_graph.x[:,col_ind]):
                     genename_to_nodeid_dict[gene_name][node_id] = val.item()
             
-        
-            edge_exp_score_mask_arr = np.array(edge_value_mask.cpu())
+            # print(edge_value_mask.shape)
+            # edge_exp_score_mask_arr = np.array(edge_value_mask.cpu())
+            edge_exp_score_mask_arr = edge_value_mask.numpy()
+            
 
 
-            edge_thr = np.quantile(np.array(edge_value_mask.cpu()), quant_thr)
+            # edge_thr = np.quantile(np.array(edge_value_mask.cpu()), quant_thr)
+            edge_thr = np.quantile(edge_value_mask.numpy(), quant_thr)
 
             print(f"Edge thr: {edge_thr:.3f}\tMin: {np.min(edge_exp_score_mask_arr)}\tMax: {np.max(edge_exp_score_mask_arr):.3f}\tMin: {np.min(edge_exp_score_mask_arr):.3f}")
             
@@ -112,13 +119,13 @@ class Custom_Explainer:
             node_to_score_dict = custom_tools.get_all_k_hop_node_scores(test_graph, edgeid_to_mask_dict, n_of_hops)
 
             adata = custom_tools.convert_graph_to_anndata(test_graph, node_to_score_dict, dataset_name=self.dataset_name)
-            adata_concat.append(adata)
+            #adata_concat.append(adata)
             plt.rcParams['figure.figsize'] = 48, 8
             fig, axs = plt.subplots(1, 4)
             plotting.plot_graph(test_graph, coordinates_arr, axs[0], font_size=5,  node_size=100, width=1)
             plotting.plot_node_importances(test_graph, coordinates_arr, node_to_score_dict,  axs[2], node_size=100, width=1)
             plotting.plot_node_importances_voronoi(test_graph, coordinates_arr, node_to_score_dict,  axs[1])
-            plotting.plot_node_types_voronoi(test_graph, coordinates_arr, axs[3])
+            # plotting.plot_node_types_voronoi(test_graph, coordinates_arr, axs[3])
             # plotting.plot_node_importances_voronoi(test_graph, coordinates_arr,  genename_to_nodeid_dict[gene_list[0]],  axs[0][3], title=gene_list[0], cmap=plt.cm.GnBu)
 
             """cols = 4
@@ -126,21 +133,26 @@ class Custom_Explainer:
                 fig_row, fig_col = int(ind/cols), ind%cols
                 plotting.plot_node_importances_voronoi(test_graph, coordinates_arr,  genename_to_nodeid_dict[gene_list[ind+1]],  axs[fig_row+1][fig_col], title=gene_list[ind+1], cmap=plt.cm.GnBu)"""
 
-
-            fig.savefig( os.path.join("../plots/explanations", self.dataset_name, f"{self.exp_name}_{self.job_id}", f"{test_graph.img_id}_{test_graph.p_id}_{str(int(test_graph.osmonth))}_{test_graph.clinical_type}.png"))
-            fig.savefig( os.path.join("../plots/explanations", self.dataset_name, f"{self.exp_name}_{self.job_id}", f"{test_graph.img_id}_{test_graph.p_id}_{str(int(test_graph.osmonth))}_{test_graph.clinical_type}.pdf"))
-            plt.close()
+            plot = True
+            if plot:
+                if self.dataset_name!="Lung":
+                    fig.savefig( os.path.join("../plots/explanations", self.dataset_name, f"{self.exp_name}_{self.job_id}", f"{test_graph.img_id}_{test_graph.p_id}_{str(int(test_graph.osmonth))}_{test_graph.clinical_type}.png"))
+                    fig.savefig( os.path.join("../plots/explanations", self.dataset_name, f"{self.exp_name}_{self.job_id}", f"{test_graph.img_id}_{test_graph.p_id}_{str(int(test_graph.osmonth))}_{test_graph.clinical_type}.pdf"))
+                else:
+                    fig.savefig( os.path.join("../plots/explanations", self.dataset_name, f"{self.exp_name}_{self.job_id}", f"{test_graph.img_id}_{test_graph.y}.png"))
+                    fig.savefig( os.path.join("../plots/explanations", self.dataset_name, f"{self.exp_name}_{self.job_id}", f"{test_graph.img_id}_{test_graph.y}.pdf"))
+                plt.close()
             count +=1
-
+            adata.write(os.path.join(OUT_DATA_PATH, "adatafiles", self.dataset_name, f"{self.exp_name}_{self.job_id}_{test_graph.img_id}.h5ad"))
         
             #if count ==3:
             #   break
 
-        print(adata_concat)
+        #print(adata_concat)
         
-        adata = ad.concat(adata_concat)
+        """adata = ad.concat(adata_concat)
         print(adata)
-        adata.write(os.path.join(OUT_DATA_PATH, "adatafiles", self.dataset_name, f"{self.exp_name}_{self.job_id}_concatenated_explanations.h5ad"))
+        adata.write(os.path.join(OUT_DATA_PATH, "adatafiles", self.dataset_name, f"{self.exp_name}_{self.job_id}_concatenated_explanations.h5ad"))"""
 
 
 
