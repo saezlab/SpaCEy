@@ -926,7 +926,7 @@ def get_n_fold_split(dataset, dataset_name):
     
     json_fl = load_json(f"../data/{dataset_name}/folds.json")
     # json_fl = load_json("../models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024/-pEmEqMbmY3nybm13c6U6Q.json")
-    # json_fl = load_json("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/models/JacksonFischer_Final/jswXq05BE0Bx2c29gNGEMg.json")
+    # json_fl = load_json("./models/JacksonFischer_Final/jswXq05BE0Bx2c29gNGEMg.json")
     lst_groups = []
     for ind, item in enumerate(dataset):
         lst_groups.append([item.p_id, item.img_id, item.clinical_type, item.tumor_grade, item.osmonth])
@@ -1418,9 +1418,9 @@ def get_train_val_test_split_by_pid(dataset, dataset_name):
     df_dataset = pd.DataFrame(lst_groups, columns=["p_id", "img_id", "clinical_type", "tumor_grade", "osmonth"])
     df_dataset_with_splits = None
     if dataset_name=="METABRIC":
-        df_dataset_with_splits = pd.read_csv("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/plots/regression_split/METABRIC_47_rest.csv")
+        df_dataset_with_splits = pd.read_csv("./plots/regression_split/METABRIC_47_rest.csv")
     elif dataset_name=="JacksonFischer":
-        df_dataset_with_splits = pd.read_csv("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/plots/regression_split/JacksonFischer_89_rest.csv")
+        df_dataset_with_splits = pd.read_csv("./plots/regression_split/JacksonFischer_89_rest.csv")
     else:
         raise ValueError("Invalid dataset name!")
 

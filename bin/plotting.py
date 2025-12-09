@@ -524,7 +524,7 @@ def plot_age_vs_survibility(fl_name="age_vs_survibility"):
     plt.savefig(os.path.join(PLOT_PATH, "manuscript_figures", f"{fl_name}.pdf"))
 
 # plot_age_vs_survibility(fl_name="age_vs_survibility")
-# plot_cell_count_distribution("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/JacksonFischer/raw/basel_zurich_preprocessed_compact_dataset.csv")
+# plot_cell_count_distribution("./data/JacksonFischer/raw/basel_zurich_preprocessed_compact_dataset.csv")
 
 # Visualization functions kept here
 import pandas as pd

@@ -20,7 +20,7 @@ from sksurv.ensemble import GradientBoostingSurvivalAnalysis
 
 dataset_name= "JacksonFischer"
 dataset_name= "METABRIC"
-dataset_path = os.path.join("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data", dataset_name)
+dataset_path = os.path.join("./data", dataset_name)
 
 def get_ct_classes():
     all_ct_class = set()
@@ -125,7 +125,7 @@ def load_json(file_path):
     return l_dict
 
 import json
-json_fl = load_json(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/{dataset_name}/folds.json")
+json_fl = load_json(f"./data/{dataset_name}/folds.json")
 
 
 aggregator = ["sum", "mean"]
@@ -203,6 +203,6 @@ print(len(all_results))
 print(len(result_df_cols))
 df_results = pd.DataFrame(np.array(all_results).T, columns=result_df_cols)
 
-df_results.to_csv(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/out_data/baseline_predictors/{dataset_name}_baseline_ct_results.csv")
+df_results.to_csv(f"./data/out_data/baseline_predictors/{dataset_name}_baseline_ct_results.csv")
 
 

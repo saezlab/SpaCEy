@@ -150,35 +150,35 @@ def get_average_scores_from_json(folder_path_list):
     print(df_results[:10])
 
 
-# calculate_cindex_scores_from_preds("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/GATV2_CoxPHLoss_month_24-11-2023", "4vzHDHJhBEhzvI91la51HQ.csv")
-# "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/GATV2_CoxPHLoss_month_24-11-2023",
-# df= calculate_all_cindex_scores([ "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/PNAConv_CoxPHLoss_month_24-11-2023"])
-# df= calculate_all_cindex_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/GATV2_NegativeLogLikelihood_fixed_dataset_13-12-2023"])
-# df= calculate_all_cindex_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/GATV2_NegativeLogLikelihood_fixed_dataset_13-12-2023"])
-# df= calculate_all_cindex_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/PNAConv_NegativeLogLikelihood_month_30-11-2023", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/GATV2_NegativeLogLikelihood_month_04-12-2023"])
-# df= calculate_all_cindex_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/GATV2_NegativeLogLikelihood_month_04-12-2023# "])
-# /net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/METABRIC_PNAConv_NegativeLogLikelihood_fixed_dataset_04-01-2024
-# df= calculate_all_cindex_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/results/idedFiles/METABRIC_PNAConv_NegativeLogLikelihood_fixed_dataset_04-01-2024"])
+# calculate_cindex_scores_from_preds("./results/idedFiles/GATV2_CoxPHLoss_month_24-11-2023", "4vzHDHJhBEhzvI91la51HQ.csv")
+# "./results/idedFiles/GATV2_CoxPHLoss_month_24-11-2023",
+# df= calculate_all_cindex_scores([ "./results/idedFiles/PNAConv_CoxPHLoss_month_24-11-2023"])
+# df= calculate_all_cindex_scores(["./results/idedFiles/GATV2_NegativeLogLikelihood_fixed_dataset_13-12-2023"])
+# df= calculate_all_cindex_scores(["./results/idedFiles/GATV2_NegativeLogLikelihood_fixed_dataset_13-12-2023"])
+# df= calculate_all_cindex_scores(["./results/idedFiles/PNAConv_NegativeLogLikelihood_month_30-11-2023", "./results/idedFiles/GATV2_NegativeLogLikelihood_month_04-12-2023"])
+# df= calculate_all_cindex_scores(["./results/idedFiles/GATV2_NegativeLogLikelihood_month_04-12-2023# "])
+# ./results/idedFiles/METABRIC_PNAConv_NegativeLogLikelihood_fixed_dataset_04-01-2024
+# df= calculate_all_cindex_scores(["./results/idedFiles/METABRIC_PNAConv_NegativeLogLikelihood_fixed_dataset_04-01-2024"])
 # print(df)
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNA_training_year_30-11-2022"]))
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNA_training_week_07-12-2022"]))
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/best_n_fold_week_14-12-2022"]))
+# print(calculate_all_reg_scores(["./data/out_data/PNA_training_year_30-11-2022"]))
+# print(calculate_all_reg_scores(["./data/out_data/PNA_training_week_07-12-2022"]))
+# print(calculate_all_reg_scores(["./data/out_data/best_n_fold_week_14-12-2022"]))
 
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/GAT_training_month_nolog_21-12-2022", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNA_training_month_nolog_15-12-2022"]))
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/bin/jobs/PNAConv_os_nolog_large_02-02-2023"]))
+# print(calculate_all_reg_scores(["./data/out_data/GAT_training_month_nolog_21-12-2022", "./data/out_data/PNA_training_month_nolog_15-12-2022"]))
+# print(calculate_all_reg_scores(["./bin/jobs/PNAConv_os_nolog_large_02-02-2023"]))
 
-# print(calculate_mae_scores_from_preds("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/best_full_training_week_15-12-2022", "CETuHyGFgP3ZZ3WwgqlUeA.csv"))
-
-
-# print(calculate_mae_scores_from_preds("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_MSE_week_lognorm_30-06-2023", "Vs2a-oNH7FLupUB80hJY9w.csv"))
-
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_os_nolog_large_6-26-2023_h_loss", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_Huber_month_30-06-2023", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_MSE_month_30-06-2023", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_MSE_week_lognorm_30-06-2023"]))
+# print(calculate_mae_scores_from_preds("./data/out_data/best_full_training_week_15-12-2022", "CETuHyGFgP3ZZ3WwgqlUeA.csv"))
 
 
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_Huber_month_30-06-2023", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_MSE_week_lognorm_30-06-2023", "/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNAConv_PNA_MSE_month_30-06-2023"]))
+# print(calculate_mae_scores_from_preds("./data/out_data/PNAConv_PNA_MSE_week_lognorm_30-06-2023", "Vs2a-oNH7FLupUB80hJY9w.csv"))
+
+# print(calculate_all_reg_scores(["./data/out_data/PNAConv_os_nolog_large_6-26-2023_h_loss", "./data/out_data/PNAConv_PNA_Huber_month_30-06-2023", "./data/out_data/PNAConv_PNA_MSE_month_30-06-2023", "./data/out_data/PNAConv_PNA_MSE_week_lognorm_30-06-2023"]))
+
+
+# print(calculate_all_reg_scores(["./data/out_data/PNAConv_PNA_Huber_month_30-06-2023", "./data/out_data/PNAConv_PNA_MSE_week_lognorm_30-06-2023", "./data/out_data/PNAConv_PNA_MSE_month_30-06-2023"]))
 
 # print(calculate_all_reg_scores([]))
 
-# print(calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024"]))
-# get_average_scores_from_json(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024"])
+# print(calculate_all_reg_scores(["./models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024"]))
+# get_average_scores_from_json(["./models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024"])
 # get_average_scores_from_json(["../models/METABRIC_GATV2_CoxPHLoss_10_fold_gpu_14-04-2024", "../models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024"])

@@ -218,7 +218,7 @@ def create_preprocessed_sc_feature_fl():
     
     
     # This part is added later to add cell type annotations / it is a bit redundant and can be refactored later
-    # /net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/JacksonFischer/Basel_SC_locations.csv
+    # ./data/JacksonFischer/Basel_SC_locations.csv
     imgcell_to_id_dict = dict()
     sc_loc_dataset_fl_lst = ["Basel_SC_locations.csv", "Zurich_SC_locations.csv"]
     for fl in sc_loc_dataset_fl_lst:

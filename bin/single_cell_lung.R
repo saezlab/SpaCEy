@@ -1,6 +1,6 @@
 library(SingleCellExperiment)
 
-setwd("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung")
+setwd("./data/Lung")
 sce <- readRDS("sce_all_annotated.rds")
 # Set a chunk size (e.g., 1000 cells per chunk)
 # Define the columns you want to extract from colData

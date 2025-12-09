@@ -23,7 +23,7 @@ sc.settings.verbosity = 0
 # Set figure params
 sc.set_figure_params(scanpy=True, facecolor="white", dpi=80, dpi_save=300)
 # Create output directory
-output_dir = Path("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/plots/analysis/JacksonFischer_JF/proportions")
+output_dir = Path("./plots/analysis/JacksonFischer_JF/proportions")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 import pandas as pd

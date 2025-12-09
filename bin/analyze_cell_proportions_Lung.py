@@ -24,7 +24,7 @@ sc.settings.verbosity = 0
 sc.set_figure_params(scanpy=True, facecolor="white", dpi=80, dpi_save=300)
 
 
-df_merged_preprocessed_dataset = pd.read_csv("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/raw/merged_preprocessed_dataset.csv")
+df_merged_preprocessed_dataset = pd.read_csv("./data/Lung/raw/merged_preprocessed_dataset.csv")
 
 ct_dict = {}
 for ind, row in df_merged_preprocessed_dataset.iterrows():
@@ -53,7 +53,7 @@ job_id = "Lung"
 PLT_PATH = f"../plots/analysis/{exp_name}_{job_id}/proportions"
 Path(PLT_PATH).mkdir(parents=True, exist_ok=True)
 # Create output directory
-output_dir = Path(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/plots/analysis/{exp_name}_{job_id}/proportions")
+output_dir = Path(f"./plots/analysis/{exp_name}_{job_id}/proportions")
 output_dir.mkdir(parents=True, exist_ok=True)
 device =  custom_tools.get_device()
 args  = custom_tools.load_json(f"../models/{exp_name}/{job_id}.json")
@@ -68,9 +68,9 @@ model = custom_tools.load_model(f"{job_id}_SD", path = f"../models/{exp_name}", 
 dataset = LungDataset(os.path.join(f"../data/{dataset_name}"),  "Progression")
 
 adata_concat = []
-for adata_fl in os.listdir(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/out_data/adatafiles/Lung"):
+for adata_fl in os.listdir(f"./data/out_data/adatafiles/Lung"):
     if  adata_fl.endswith("lr-0.01.h5ad"):
-        adata = sc.read_h5ad(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/out_data/adatafiles/Lung/{adata_fl}")
+        adata = sc.read_h5ad(f"./data/out_data/adatafiles/Lung/{adata_fl}")
         idx = adata_fl.split("_lr")[0]
         idx = idx.rsplit("_", 1)[0]
         print(idx)

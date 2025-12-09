@@ -110,9 +110,9 @@ def perform_k_fold_on_best_models(experiment_name, top_n=10):
 
     random.seed = 42
 
-    # df_results = calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNA_training_12-10-2022"])
-    # df_results = calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/out_data/PNA_training_week_07-12-2022"])
-    df_results = calculate_all_reg_scores(["/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/models/PNAConv_PNA_MSE_month_30-06-2023"]) 
+    # df_results = calculate_all_reg_scores(["./data/out_data/PNA_training_12-10-2022"])
+    # df_results = calculate_all_reg_scores(["./data/out_data/PNA_training_week_07-12-2022"])
+    df_results = calculate_all_reg_scores(["./models/PNAConv_PNA_MSE_month_30-06-2023"]) 
     print(df_results)
     number_of_runs = 10
     count=1

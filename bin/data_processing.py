@@ -496,7 +496,7 @@ def data_processing_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, GRAPH_DIV
     print("Creating graphs...")
     create_graphs_delauney_triangulation(cell_count_thr=CELL_COUNT_THR, GRAPH_DIV_THR=quartile, plot=True,RAW_DATA_PATH = RAW_DATA_PATH, data_path=data_path, PLOT_PATH=PLOT_PATH)
 
-# data_processing_pipeline("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/JacksonFischer/raw/merged_preprocessed_dataset.csv")
+# data_processing_pipeline("./data/JacksonFischer/raw/merged_preprocessed_dataset.csv")
 
 def data_processing_metabric_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, GRAPH_DIV_THR=GRAPH_DIV_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
     # TODO make this parametric
@@ -515,7 +515,7 @@ def data_processing_metabric_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, 
     create_graphs_delauney_triangulation(cell_count_thr=CELL_COUNT_THR, GRAPH_DIV_THR=quartile, plot=True,RAW_DATA_PATH = RAW_DATA_PATH, data_path=data_path, PLOT_PATH=PLOT_PATH)
 
 
-# data_processing_metabric_pipeline("/net/data.isilon/ag-saez/bq_arifaioglu/home/Projects/GNNClinicalOutcomePrediction/data/METABRIC/raw/merged_preprocessed_dataset.csv",CELL_COUNT_THR=CELL_COUNT_THR, GRAPH_DIV_THR=GRAPH_DIV_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH)
+# data_processing_metabric_pipeline("./data/METABRIC/raw/merged_preprocessed_dataset.csv",CELL_COUNT_THR=CELL_COUNT_THR, GRAPH_DIV_THR=GRAPH_DIV_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH)
 
 def data_processing_lung_old_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
     # print("Creating compact dataset...")
@@ -529,7 +529,7 @@ def data_processing_lung_old_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, 
     print("Creating graphs...")
     create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "Sample_ID", pid_col = "Patient_ID",  x_loc ="Center_X", y_loc = "Center_Y", divide_sample=False,  plot=True, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
 
-# data_processing_lungold_pipeline("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/lung_imc_dataset.csv")
+# data_processing_lungold_pipeline("./data/Lung/lung_imc_dataset.csv")
 
 def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
     # print("Creating compact dataset...")
@@ -545,4 +545,4 @@ def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT
     print("Creating graphs...")
     create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "sample_id", pid_col = "sample_id",  x_loc ="Location_Center_X", y_loc = "Location_Center_Y", divide_sample=False,  plot=False, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
 
-# data_processing_lung_pipeline("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/Lung/raw/merged_preprocessed_dataset.csv")
+# data_processing_lung_pipeline("./data/Lung/raw/merged_preprocessed_dataset.csv")

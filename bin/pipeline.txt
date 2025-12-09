@@ -8,10 +8,10 @@ python train_with_session.py --dataset_name JacksonFischer --full_training --mod
 # run explainer 
 python explain_driver.py --dataset_name JacksonFischer --exp_name "JacksonFischer" --job_id JF
 
-docker cp ac17d4c9c1d2:/GNNClinicalOutcomePrediction/data/out_data/adatafiles/JacksonFischer/JacksonFischer_JF_concatenated_explanations.h5ad /home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/out_data/adatafiles/JacksonFischer
-correlation_analysis.ipynb # 
+docker cp ac17d4c9c1d2:/GNNClinicalOutcomePrediction/data/out_data/adatafiles/JacksonFischer/JacksonFischer_JF_concatenated_explanations.h5ad ./data/out_data/adatafiles/JacksonFischer
+correlation_analysis.ipynb # 
 
-docker cp ac17d4c9c1d2:/GNNClinicalOutcomePrediction/plots/. /home/rifaioglu/projects/GNNClinicalOutcomePrediction/plots
+docker cp ac17d4c9c1d2:/GNNClinicalOutcomePrediction/plots/. ./plots
 docker cp ea98ee9a0761:/GNNClinicalOutcomePrediction/models/METABRIC/METABRIC_xfold.json /GNNClinicalOutcomePrediction/models/METABRIC/
 
 python train_with_session.py --dataset_name METABRIC --no-full_training --model_name METABRIC_xfold

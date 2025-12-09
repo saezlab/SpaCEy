@@ -21,7 +21,7 @@ from sksurv.ensemble import GradientBoostingSurvivalAnalysis
 dataset_name = "JacksonFischer"
 dataset_name= "METABRIC"
 random_state = 42
-dataset_path = os.path.join("/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data", dataset_name)
+dataset_path = os.path.join("./data", dataset_name)
 num_of_markers = 37 if dataset_name=="METABRIC" else 33
 def get_dataset_df(agg="mean"):
     wanted_label = "OSmonth"
@@ -100,7 +100,7 @@ def load_json(file_path):
     return l_dict
 
 import json
-json_fl = load_json(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/{dataset_name}/folds.json")
+json_fl = load_json(f"./data/{dataset_name}/folds.json")
 
 
 aggregator = ["sum", "mean", "min", "max"]
@@ -177,5 +177,5 @@ print(len(all_results))
 print(len(result_df_cols))
 df_results = pd.DataFrame(np.array(all_results).T, columns=result_df_cols)
 
-df_results.to_csv(f"/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/out_data/baseline_predictors/{dataset_name}_pseudobulk_results.csv")
+df_results.to_csv(f"./data/out_data/baseline_predictors/{dataset_name}_pseudobulk_results.csv")
 

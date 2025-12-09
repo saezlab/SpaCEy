@@ -5,7 +5,7 @@ import os
 
 def analyze_dataset_JascksonFischer():
     # Read the dataset
-    df = pd.read_csv('/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/JacksonFischer/raw/merged_preprocessed_dataset.csv', low_memory=False)
+    df = pd.read_csv('./data/JacksonFischer/raw/merged_preprocessed_dataset.csv', low_memory=False)
 
     # Calculate summary statistics
     total_patients = df['PID'].nunique()
@@ -71,7 +71,7 @@ def analyze_dataset_JascksonFischer():
     general_stats_df = pd.DataFrame(general_stats_dict)
 
     # Create directory if it doesn't exist
-    output_dir = '/home/rifaioglu/projects/GNNClinicalOutcomePrediction/plots/analysis/EDA/JacksonFischer'
+    output_dir = './plots/analysis/EDA/JacksonFischer'
     os.makedirs(output_dir, exist_ok=True)
 
     # Save merged statistics to CSV
@@ -127,7 +127,7 @@ def analyze_dataset_JascksonFischer():
 
 def analyze_dataset_METABRIC():
     # Read the dataset
-    df = pd.read_csv('/home/rifaioglu/projects/GNNClinicalOutcomePrediction/data/METABRIC/raw/merged_preprocessed_dataset.csv', low_memory=False)
+    df = pd.read_csv('./data/METABRIC/raw/merged_preprocessed_dataset.csv', low_memory=False)
 
     # Ensure clinical_subtype column exists (create if not present)
     if 'clinical_subtype' not in df.columns:
@@ -181,7 +181,7 @@ def analyze_dataset_METABRIC():
     general_stats_df = pd.DataFrame(general_stats_dict)
 
     # Create directory if it doesn't exist
-    output_dir = '/home/rifaioglu/projects/GNNClinicalOutcomePrediction/plots/analysis/EDA/METABRIC'
+    output_dir = './plots/analysis/EDA/METABRIC'
     os.makedirs(output_dir, exist_ok=True)
 
     # Save merged statistics to CSV
