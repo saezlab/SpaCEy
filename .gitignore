@@ -173,3 +173,5 @@ logs
 results/
 bin/checkpoint.pt
 docker.commands
+bin/to_be_ignored/
+bin/to_be_ignored/*
