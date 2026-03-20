@@ -146,8 +146,10 @@ logs/
 
 # ignore large data folders
 data/
-
-
+data
+models
+results
+plots
 # sketches
 sketches/
 sketches/*
