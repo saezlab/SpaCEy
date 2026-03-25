@@ -546,3 +546,342 @@ def data_processing_lung_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT
     create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_THR, sample_col= "sample_id", pid_col = "sample_id",  x_loc ="Location_Center_X", y_loc = "Location_Center_Y", divide_sample=False,  plot=False, RAW_DATA_PATH = RAW_DATA_PATH, PLOT_PATH=PLOT_PATH)
 
 # data_processing_lung_pipeline("./data/Lung/raw/merged_preprocessed_dataset.csv")
+
+
+CODEX_CRC_SOURCE_EXCLUDE_COLUMNS = {
+    "Unnamed: 0",
+    "CellID",
+    "ClusterID",
+    "EventID",
+    "File Name",
+    "Region",
+    "TMA_AB",
+    "TMA_12",
+    "Index in File",
+    "groups",
+    "patients",
+    "spots",
+    "cell_id:cell_id",
+    "tile_nr:tile_nr",
+    "X:X",
+    "Y:Y",
+    "X_withinTile:X_withinTile",
+    "Y_withinTile:Y_withinTile",
+    "Z:Z",
+    "size:size",
+    "Profile_Homogeneity:Fiter1",
+    "ClusterSize",
+    "ClusterName",
+    "neighborhood10",
+    "neighborhood number final",
+    "neighborhood name",
+}
+
+CODEX_CRC_PREPROCESSED_EXCLUDE_COLUMNS = {
+    "sample_id",
+    "cell_id",
+    "cell_type",
+    "Location_Center_X",
+    "Location_Center_Y",
+    "area_pixels",
+    "patient_id",
+    "group_id",
+    "spot_id",
+    "region_id",
+    "TMA_AB",
+    "TMA_12",
+    "cluster_id",
+    "event_id",
+    "tile_nr",
+    "z_plane",
+    "profile_homogeneity",
+    "cluster_size",
+    "neighborhood10",
+    "neighborhood_number_final",
+    "neighborhood_name",
+    "cd4_icos_positive",
+    "cd4_ki67_positive",
+    "cd4_pd1_positive",
+    "cd68_cd163_icos_positive",
+    "cd68_cd163_ki67_positive",
+    "cd68_cd163_pd1_positive",
+    "cd68_icos_positive",
+    "cd68_ki67_positive",
+    "cd68_pd1_positive",
+    "cd8_icos_positive",
+    "cd8_ki67_positive",
+    "cd8_pd1_positive",
+    "treg_icos_positive",
+    "treg_ki67_positive",
+    "treg_pd1_positive",
+}
+
+
+def get_codex_crc_feature_columns(df_dataset):
+    if {"sample_id", "Location_Center_X", "Location_Center_Y"}.issubset(df_dataset.columns):
+        exclude_columns = CODEX_CRC_PREPROCESSED_EXCLUDE_COLUMNS
+    else:
+        exclude_columns = CODEX_CRC_SOURCE_EXCLUDE_COLUMNS
+
+    feature_cols = []
+    for col in df_dataset.columns:
+        if col in exclude_columns or "+" in col:
+            continue
+        if pd.api.types.is_numeric_dtype(df_dataset[col]):
+            feature_cols.append(col)
+
+    return feature_cols
+
+
+def create_preprocessed_codex_crc_dataset(data_path, RAW_DATA_PATH):
+    os.makedirs(RAW_DATA_PATH, exist_ok=True)
+
+    df_dataset = get_dataset_from_csv(data_path, index_col=None)
+
+    if {"sample_id", "cell_type", "Location_Center_X", "Location_Center_Y"}.issubset(df_dataset.columns):
+        feature_cols = get_codex_crc_feature_columns(df_dataset)
+        merged_output_path = os.path.join(RAW_DATA_PATH, "merged_preprocessed_dataset.csv")
+        if os.path.abspath(data_path) != os.path.abspath(merged_output_path):
+            df_dataset.to_csv(merged_output_path, index=False)
+        return df_dataset, feature_cols
+
+    feature_cols = get_codex_crc_feature_columns(df_dataset)
+    rename_columns = {
+        "File Name": "sample_id",
+        "cell_id:cell_id": "cell_id",
+        "ClusterName": "cell_type",
+        "X:X": "Location_Center_X",
+        "Y:Y": "Location_Center_Y",
+        "size:size": "area_pixels",
+        "patients": "patient_id",
+        "groups": "group_id",
+        "spots": "spot_id",
+        "Region": "region_id",
+        "ClusterID": "cluster_id",
+        "EventID": "event_id",
+        "tile_nr:tile_nr": "tile_nr",
+        "Z:Z": "z_plane",
+        "Profile_Homogeneity:Fiter1": "profile_homogeneity",
+        "ClusterSize": "cluster_size",
+        "neighborhood number final": "neighborhood_number_final",
+        "neighborhood name": "neighborhood_name",
+        "CD4+ICOS+": "cd4_icos_positive",
+        "CD4+Ki67+": "cd4_ki67_positive",
+        "CD4+PD-1+": "cd4_pd1_positive",
+        "CD68+CD163+ICOS+": "cd68_cd163_icos_positive",
+        "CD68+CD163+Ki67+": "cd68_cd163_ki67_positive",
+        "CD68+CD163+PD-1+": "cd68_cd163_pd1_positive",
+        "CD68+ICOS+": "cd68_icos_positive",
+        "CD68+Ki67+": "cd68_ki67_positive",
+        "CD68+PD-1+": "cd68_pd1_positive",
+        "CD8+ICOS+": "cd8_icos_positive",
+        "CD8+Ki67+": "cd8_ki67_positive",
+        "CD8+PD-1+": "cd8_pd1_positive",
+        "Treg-ICOS+": "treg_icos_positive",
+        "Treg-Ki67+": "treg_ki67_positive",
+        "Treg-PD-1+": "treg_pd1_positive",
+    }
+
+    columns_to_keep = [
+        "File Name",
+        "cell_id:cell_id",
+        "ClusterName",
+        "X:X",
+        "Y:Y",
+        "size:size",
+        "patients",
+        "groups",
+        "spots",
+        "Region",
+        "TMA_AB",
+        "TMA_12",
+        "ClusterID",
+        "EventID",
+        "tile_nr:tile_nr",
+        "Z:Z",
+        "Profile_Homogeneity:Fiter1",
+        "ClusterSize",
+        "neighborhood10",
+        "neighborhood number final",
+        "neighborhood name",
+        "CD4+ICOS+",
+        "CD4+Ki67+",
+        "CD4+PD-1+",
+        "CD68+CD163+ICOS+",
+        "CD68+CD163+Ki67+",
+        "CD68+CD163+PD-1+",
+        "CD68+ICOS+",
+        "CD68+Ki67+",
+        "CD68+PD-1+",
+        "CD8+ICOS+",
+        "CD8+Ki67+",
+        "CD8+PD-1+",
+        "Treg-ICOS+",
+        "Treg-Ki67+",
+        "Treg-PD-1+",
+    ] + feature_cols
+
+    df_preprocessed = df_dataset[columns_to_keep].rename(columns=rename_columns)
+    merged_output_path = os.path.join(RAW_DATA_PATH, "merged_preprocessed_dataset.csv")
+    df_preprocessed.to_csv(merged_output_path, index=False)
+
+    return df_preprocessed, feature_cols
+
+
+def generate_graphs_using_points_codex_crc(df_image, imgnum_edge_thr_dict, img_num, pid, feature_cols, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos=None, plot=False, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH):
+    points = df_image[[loc_x_col, loc_y_col]].to_numpy()
+
+    if pos:
+        img_num_lbl = f"{img_num}{pos}"
+    else:
+        img_num_lbl = img_num
+
+    point_to_lbl_dict = dict()
+    for ind, pt in enumerate(points):
+        point_to_lbl_dict[tuple(pt)] = ind
+
+    incidence_set = set()
+
+    tri = Delaunay(points)
+    small_edges = set()
+    large_edges = set()
+    for tr in tri.simplices:
+        for i in range(3):
+            edge_idx0 = tr[i]
+            edge_idx1 = tr[(i + 1) % 3]
+
+            if (edge_idx1, edge_idx0) in small_edges:
+                continue
+            if (edge_idx1, edge_idx0) in large_edges:
+                continue
+            p0 = points[edge_idx0]
+            p1 = points[edge_idx1]
+
+            edge_length = np.linalg.norm(p1 - p0)
+            if edge_length < imgnum_edge_thr_dict[img_num]:
+                small_edges.add((edge_idx0, edge_idx1))
+                incidence_set.add((point_to_lbl_dict[tuple(p0)], point_to_lbl_dict[tuple(p1)], edge_length))
+                incidence_set.add((point_to_lbl_dict[tuple(p1)], point_to_lbl_dict[tuple(p0)], edge_length))
+            else:
+                large_edges.add((edge_idx0, edge_idx1))
+
+    if plot:
+        plt.close("all")
+        plt.figure(dpi=300)
+        plt.plot(points[:, 0], points[:, 1], ".", markersize=2)
+        for i, j in small_edges:
+            plt.plot(points[[i, j], 0], points[[i, j], 1], "r", linewidth=1)
+        for i, j in large_edges:
+            plt.plot(points[[i, j], 0], points[[i, j], 1], "c--", alpha=0.2, linewidth=1)
+
+        plt.savefig(f"{PLOT_PATH}/{img_num_lbl}_{pid}_adapt_thr.pdf")
+        plt.close()
+
+        plt.figure(dpi=300)
+        vor = Voronoi(points)
+        voronoi_plot_2d(vor, show_vertices=False, line_colors="orange", line_width=1, line_alpha=0.6, point_size=2)
+        plt.savefig(f"{PLOT_PATH}/{img_num_lbl}_{pid}_voronoi.pdf", dpi=300)
+        plt.close()
+
+    edge_index_arr = np.array([list(edge)[:2] for edge in incidence_set], dtype=np.int32)
+    edge_length_arr = np.array([list(edge)[-1] for edge in incidence_set])
+
+    assert edge_index_arr.shape[0] == edge_length_arr.shape[0]
+
+    sample_id = df_image["sample_id"].iloc[0]
+    neighborhood_mode = df_image["neighborhood_name"].dropna().mode()
+    dominant_neighborhood_name = neighborhood_mode.iloc[0] if not neighborhood_mode.empty else np.nan
+    dominant_cluster = df_image["cell_type"].mode().iloc[0]
+
+    clinical_info_dict = {
+        "sample_id": sample_id if not pos else f"{sample_id}_{pos}",
+        "patient_id": df_image["patient_id"].iloc[0],
+        "group_id": df_image["group_id"].iloc[0],
+        "spot_id": df_image["spot_id"].iloc[0],
+        "region_id": df_image["region_id"].iloc[0],
+        "TMA_AB": df_image["TMA_AB"].iloc[0],
+        "TMA_12": df_image["TMA_12"].iloc[0],
+        "cell_count": len(df_image),
+        "unique_cell_types": int(df_image["cell_type"].nunique()),
+        "dominant_cell_type": dominant_cluster,
+        "dominant_neighborhood_name": dominant_neighborhood_name,
+    }
+
+    with open(os.path.join(RAW_DATA_PATH, f"{img_num_lbl}_{pid}_edge_index_length.pickle"), "wb") as handle:
+        pickle.dump((edge_index_arr, edge_length_arr), handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(os.path.join(RAW_DATA_PATH, f"{img_num_lbl}_{pid}_features.pickle"), "wb") as handle:
+        pickle.dump(np.array(df_image[feature_cols]), handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(os.path.join(RAW_DATA_PATH, f"{img_num_lbl}_{pid}_ct_class.pickle"), "wb") as handle:
+        pickle.dump(df_image[["cell_type"]].to_numpy(), handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(os.path.join(RAW_DATA_PATH, f"{img_num_lbl}_{pid}_coordinates.pickle"), "wb") as handle:
+        pickle.dump(points, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(os.path.join(RAW_DATA_PATH, f"{img_num_lbl}_{pid}_clinical_info.pickle"), "wb") as handle:
+        pickle.dump(clinical_info_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def create_graphs_delauney_triangulation_codex_crc(df_dataset, feature_cols, cell_count_thr=CELL_COUNT_THR, sample_col="sample_id", pid_col="sample_id", plot=False, RAW_DATA_PATH=RAW_DATA_PATH, PLOT_PATH=PLOT_PATH):
+    df_cell_count = get_cell_count_df(df_dataset, cell_count_thr, sample_col=sample_col)
+
+    with open(os.path.join(RAW_DATA_PATH, "edge_thr.pickle"), "rb") as handle:
+        imgnum_edge_thr_dict = pickle.load(handle)
+
+    for _, row in tqdm(df_cell_count.iterrows(), total=len(df_cell_count)):
+        img_num = row[sample_col]
+        df_image = df_dataset[df_dataset[sample_col] == img_num]
+        pid = df_image[pid_col].values[0]
+        generate_graphs_using_points_codex_crc(
+            df_image,
+            imgnum_edge_thr_dict,
+            img_num,
+            pid,
+            feature_cols=feature_cols,
+            loc_x_col="Location_Center_X",
+            loc_y_col="Location_Center_Y",
+            pos=None,
+            plot=plot,
+            PLOT_PATH=PLOT_PATH,
+            RAW_DATA_PATH=RAW_DATA_PATH,
+        )
+
+
+def data_processing_codex_crc_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR, PLOT_PATH=None, RAW_DATA_PATH=None):
+    if RAW_DATA_PATH is None:
+        RAW_DATA_PATH = os.path.join(os.path.dirname(data_path), "raw")
+    if PLOT_PATH is None:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(data_path))))
+        PLOT_PATH = os.path.join(project_root, "plots", "codex_crc", "graph_voronoi_plots")
+
+    os.makedirs(RAW_DATA_PATH, exist_ok=True)
+    os.makedirs(PLOT_PATH, exist_ok=True)
+
+    print("Creating compact CRC dataset...")
+    df_dataset, feature_cols = create_preprocessed_codex_crc_dataset(data_path, RAW_DATA_PATH=RAW_DATA_PATH)
+
+    print("Calculating edge length distribution....")
+    get_edge_length_dist(
+        df_dataset,
+        cell_count_thr=CELL_COUNT_THR,
+        quant=0.975,
+        sample_col="sample_id",
+        loc_x="Location_Center_X",
+        loc_y="Location_Center_Y",
+        plot_dist=False,
+        PLOT_PATH=PLOT_PATH,
+        RAW_DATA_PATH=RAW_DATA_PATH,
+    )
+
+    print("Creating CRC graphs...")
+    create_graphs_delauney_triangulation_codex_crc(
+        df_dataset,
+        feature_cols=feature_cols,
+        cell_count_thr=CELL_COUNT_THR,
+        sample_col="sample_id",
+        pid_col="sample_id",
+        plot=True,
+        RAW_DATA_PATH=RAW_DATA_PATH,
+        PLOT_PATH=PLOT_PATH,
+    )
