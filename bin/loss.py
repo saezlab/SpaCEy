@@ -5,10 +5,6 @@ import torch
 from torch import Tensor
 
 
-def events_from_censored(is_censored):
-    """`is_censored` flag (1 = alive/censored, 0 = death) to the
-    event indicator (1 = death) expected by the Cox losses and the C-index."""
-    return 1 - is_censored
 
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
     """Requires the input to be sorted by descending duration time.
@@ -29,6 +25,11 @@ def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tens
     gamma = log_h.max()
     log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
     return - log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum())
+
+def events_from_censored(is_censored):
+    """is_censored flag (1 = alive/censored, 0 = death) to the
+    event indicator (1 = death) expected by the Cox losses and the C-index."""
+    return 1 - is_censored
 
 
 def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:

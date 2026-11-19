@@ -126,9 +126,7 @@ def train_epoch_aug(model, loader, optimizer, criterion, device) -> None:
 
 
 def fit_graph(config, graphs, train_idx, val_idx, device, training, seed, select="ci"):
-    """Early stopping on inner-validation loss; the checkpoint is the epoch with the best inner-validation
-    patient C-index (select="ci") or the lowest inner-validation loss (select="loss"), among epochs
-    >= config["min_epochs"] (default 0)."""
+
     custom_tools.set_seeds(seed, deterministic=False)
     criterion = CoxRankLoss(float(config.get("rank_weight", 0.0)))
     model = build_model(config, graphs[0].num_node_features, device)
@@ -296,12 +294,7 @@ class trainer_tester:
               f"(SD {result.test_patient_ci.std():.4f}); results in {out}")
 
     def full_train_loop(self) -> None:
-        """Trains one model on all patients (for example to explain it afterwards); there is no test set.
-
-        The number of epochs comes from an inner 20% patient split (early stopping on its Cox loss, as in
-        cv_setting heldout); the model is then retrained on all patients for that many epochs, replaying the
-        learning-rate schedule. Saves <id>_SD.mdl (state dict) and <id>.json (settings) to MODEL_PATH, in the
-        format custom_tools.load_model reads, and the training-set predictions to RESULT_PATH."""
+        
         args = self.parser_args
         config = self.get_config()
         training = "mini_aug" if config["augment"] else "mini"

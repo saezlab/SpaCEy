@@ -150,6 +150,7 @@ def somers_d(event_times, x, event_observed=None) -> float:
 
 def concordance_index(event_times, predicted_scores, event_observed=None) -> float:
     """
+
     Calculates the concordance index (C-index) between a series
     of event times and a predicted score. The first is the real survival times from
     the observational data, and the other is the predicted score from a model of some kind.
@@ -201,6 +202,7 @@ def concordance_index(event_times, predicted_scores, event_observed=None) -> flo
         from lifelines.utils import concordance_index
         cph = CoxPHFitter().fit(df, 'T', 'E')
         concordance_index(df['T'], -cph.predict_partial_hazard(df), df['E'])
+    adapted from lifelines.utils.concordance_index
 
     """
     event_times, predicted_scores, event_observed = _preprocess_scoring_data(event_times, predicted_scores, event_observed)
@@ -220,40 +222,6 @@ def _concordance_summary_statistics(event_times, predicted_event_times, event_ob
 
     Assumes the data has been verified by lifelines.utils.concordance_index first.
     """
-    # Here's how this works.
-    #
-    # It would be pretty easy to do if we had no censored data and no ties. There, the basic idea
-    # would be to iterate over the cases in order of their true event time (from least to greatest),
-    # while keeping track of a pool of *predicted* event times for all cases previously seen (= all
-    # cases that we know should be ranked lower than the case we're looking at currently).
-    #
-    # If the pool has O(log n) insert and O(log n) RANK (i.e., "how many things in the pool have
-    # value less than x"), then the following algorithm is n log n:
-    #
-    # Sort the times and predictions by time, increasing
-    # n_pairs, n_correct := 0
-    # pool := {}
-    # for each prediction p:
-    #     n_pairs += len(pool)
-    #     n_correct += rank(pool, p)
-    #     add p to pool
-    #
-    # There are three complications: tied ground truth values, tied predictions, and censored
-    # observations.
-    #
-    # - To handle tied true event times, we modify the inner loop to work in *batches* of observations
-    # p_1, ..., p_n whose true event times are tied, and then add them all to the pool
-    # simultaneously at the end.
-    #
-    # - To handle tied predictions, which should each count for 0.5, we switch to
-    #     n_correct += min_rank(pool, p)
-    #     n_tied += count(pool, p)
-    #
-    # - To handle censored observations, we handle each batch of tied, censored observations just
-    # after the batch of observations that died at the same time (since those censored observations
-    # are comparable all the observations that died at the same time or previously). However, we do
-    # NOT add them to the pool at the end, because they are NOT comparable with any observations
-    # that leave the study afterward--whether or not those observations get censored.
     if np.logical_not(event_observed).all():
         return (0, 0, 0)
 
