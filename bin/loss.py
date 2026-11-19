@@ -4,6 +4,12 @@
 import torch
 from torch import Tensor
 
+
+def events_from_censored(is_censored):
+    """`is_censored` flag (1 = alive/censored, 0 = death) to the
+    event indicator (1 = death) expected by the Cox losses and the C-index."""
+    return 1 - is_censored
+
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
     """Requires the input to be sorted by descending duration time.
     See DatasetDurationSorted.
@@ -18,6 +24,8 @@ def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tens
         events = events.float()
     events = events.view(-1)
     log_h = log_h.view(-1)
+    if events.sum() == 0:
+        return log_h.sum() * 0.0
     gamma = log_h.max()
     log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
     return - log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum())
@@ -68,6 +76,8 @@ class NegativeLogLikelihood(torch.nn.Module):
         # print("risk_pred", risk_pred[:5], risk_pred[:5].shape)
         y = torch.reshape(y, risk_pred.shape)
         e = torch.reshape(e, risk_pred.shape)
+        if e.sum() == 0:
+            return risk_pred.sum() * 0.0
         # print("y", y[:5], y[:5].shape)
         # print("e", e[:5])
         # print("risk_pred", risk_pred)
@@ -85,3 +95,24 @@ class NegativeLogLikelihood(torch.nn.Module):
         # l2_loss = self.reg(model)
         # return neg_log_loss + l2_loss
         return neg_log_loss#  + l2_loss
+
+
+def pairwise_rank_loss(log_h, durations, events):
+    """Logistic loss over comparable pairs (i died before j's time): pushes risk_i above risk_j."""
+    log_h, t, e = log_h.view(-1), durations.view(-1), events.view(-1)
+    comparable = (t.unsqueeze(1) < t.unsqueeze(0)) & (e.unsqueeze(1) > 0)
+    if not comparable.any():
+        return log_h.sum() * 0.0
+    return torch.nn.functional.softplus(-(log_h.unsqueeze(1) - log_h.unsqueeze(0)))[comparable].mean()
+
+
+class CoxRankLoss(torch.nn.Module):
+    def __init__(self, rank_weight: float = 0.0):
+        super().__init__()
+        self.cox, self.rank_weight = CoxPHLoss(), rank_weight
+
+    def forward(self, log_h, durations, events, device="cuda"):
+        loss = self.cox(log_h, durations, events)
+        if self.rank_weight:
+            loss = loss + self.rank_weight * pairwise_rank_loss(log_h, durations, events)
+        return loss

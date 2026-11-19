@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from sklearn.preprocessing import label_binarize
 import torch
 from model import CustomGCN
-from dataset import TissueDataset, LungDataset
+from dataset import TissueDataset, LungDataset, CodexCRCDataset, NSCLCDataset
 from torch_geometric.loader import DataLoader
 import numpy as np
 import torch.nn as nn
@@ -21,6 +21,7 @@ import seaborn as sns
 
 import pytorch_lightning as pl
 from eval import concordance_index
+from loss import events_from_censored
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch_geometric.nn import PNAConv 
 from early_stopping import EarlyStopping
@@ -57,6 +58,27 @@ class trainer_tester:
         """Sets up the computation device for the class
         """
         self.device = custom_tools.get_device(self.parser_args.gpu_id)
+        if self.device == "cpu":
+            raise RuntimeError("no GPU found!")
+
+    def format_metric(self, value):
+        return f"{value:.4f}" if value is not None else "None"
+
+    def get_primary_classification_metric(self, val_scores):
+        metric_name = getattr(self.parser_args, "optimization_metric", "accuracy")
+        metric_value = val_scores.get(metric_name)
+
+        if metric_value is None:
+            metric_name = "accuracy"
+            metric_value = val_scores.get("accuracy")
+        if metric_value is None:
+            metric_name = "f1"
+            metric_value = val_scores.get("f1")
+        if metric_value is None:
+            metric_name = "auc"
+            metric_value = val_scores.get("auc")
+
+        return metric_name, metric_value if metric_value is not None else 0.0
 
     def convert_to_month(self, df_col):
         if self.parser_args.unit=="week":
@@ -75,6 +97,11 @@ class trainer_tester:
         """
         if self.parser_args.dataset_name == "Lung":
             self.dataset = LungDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}"), self.parser_args.label)
+        elif self.parser_args.dataset_name in ["codex_crc", "CODEX_CRC", "CRC"]:
+            self.dataset = CodexCRCDataset(os.path.join(self.setup_args.S_PATH, "../data/codex_crc"), self.parser_args.label)
+        elif self.parser_args.dataset_name.startswith("NSCLC"):
+            # e.g. NSCLC_ROI_low -> data/NSCLC_ROI_low (one folder per ROI setting)
+            self.dataset = NSCLCDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}"), self.parser_args.label)
         else:
             self.dataset = TissueDataset(os.path.join(self.setup_args.S_PATH, f"../data/{self.parser_args.dataset_name}", self.parser_args.unit),  self.parser_args.unit)
 
@@ -110,7 +137,7 @@ class trainer_tester:
             # Only set class_weights if defined for DiseaseStage
             self.setup_args.criterion = torch.nn.CrossEntropyLoss()
 
-        elif self.parser_args.label in ["Relapse","Progression"]:
+        elif self.parser_args.label in ["Relapse","Progression", "CLR_DII", "PFS_short"]:
             print("Classification")
             self.label_type = "classification"
             self.dataset.data.y = self.dataset.data.y
@@ -170,20 +197,39 @@ class trainer_tester:
         # Add train/validation/test split if t_v_t is True
         elif self.parser_args.t_v_t:
             print("Creating train/validation/test split")
-            # Create train/validation/test split
-            dataset_size = len(self.dataset)
-            train_size = int(0.7 * dataset_size)
-            val_size = int(0.15 * dataset_size)
-            test_size = dataset_size - train_size - val_size
-            print("Train size:", train_size, "Validation size:", val_size, "Test size:", test_size)
-            
-            # Create indices for the split
-            indices = list(range(dataset_size))
-            random.shuffle(indices)
-            
-            train_indices = indices[:train_size]
-            val_indices = indices[train_size:train_size + val_size]
-            test_indices = indices[train_size + val_size:]
+            if getattr(self.parser_args, "patient_stratified_tvt", False):
+                (
+                    train_indices,
+                    val_indices,
+                    test_indices,
+                    train_patients,
+                    val_patients,
+                    test_patients,
+                ) = custom_tools.create_stratified_train_val_test_split_by_pid(
+                    self.dataset,
+                    val_size=0.1,
+                    test_size=0.1,
+                    random_state=42,
+                )
+                print(
+                    "Patient-stratified train/validation/test split:",
+                    f"{len(train_indices)} train samples from {len(train_patients)} patients,",
+                    f"{len(val_indices)} validation samples from {len(val_patients)} patients,",
+                    f"{len(test_indices)} test samples from {len(test_patients)} patients",
+                )
+            else:
+                dataset_size = len(self.dataset)
+                train_size = int(0.8 * dataset_size)
+                val_size = int(0.1 * dataset_size)
+                test_size = dataset_size - train_size - val_size
+                print("Train size:", train_size, "Validation size:", val_size, "Test size:", test_size)
+                
+                indices = list(range(dataset_size))
+                random.shuffle(indices)
+                
+                train_indices = indices[:train_size]
+                val_indices = indices[train_size:train_size + val_size]
+                test_indices = indices[train_size + val_size:]
             
             # Create samplers
             train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
@@ -225,6 +271,14 @@ class trainer_tester:
             # self.samplers = custom_tools.k_fold_by_group(self.dataset)
             if self.parser_args.dataset_name == "Lung":
                 self.samplers = custom_tools.create_stratified_cv_folds_lung_dataset_balanced_validation(
+                    dataset=self.dataset,
+                    clinical_outcome_label=self.parser_args.label,
+                    n_folds=5,
+                    random_state=42
+                )
+            elif self.parser_args.dataset_name in ["codex_crc", "CODEX_CRC", "CRC"] or self.parser_args.dataset_name.startswith("NSCLC"):
+                # Patient-grouped, outcome-stratified folds (groups by data.p_id, stratifies by data.y).
+                self.samplers = custom_tools.create_stratified_cv_folds_codex_crc_balanced_validation(
                     dataset=self.dataset,
                     clinical_outcome_label=self.parser_args.label,
                     n_folds=5,
@@ -399,7 +453,7 @@ class trainer_tester:
             # print("Out shape", out.shape, torch.sigmoid(out).shape, data.y.shape)
             loss = None
             if self.parser_args.loss == "CoxPHLoss":#  or self.parser_args.loss == "NegativeLogLikelihood":
-                loss = self.setup_args.criterion(out, data.y.to(self.device), data.is_censored.to(self.device))  # Compute the loss.    
+                loss = self.setup_args.criterion(out, data.y.to(self.device), events_from_censored(data.is_censored).to(self.device))  # Compute the loss.    
             else:
                 target = data.y
                 if self.label_type == "classification":
@@ -478,6 +532,8 @@ class trainer_tester:
 
         total_loss = 0.0
         pid_list, img_list, pred_list, true_list, tumor_grade_list, clinical_type_list, osmonth_list, censorship_list, progression_list, sample_id_list, disease_stage_list = [], [], [], [], [], [], [], [], [], [], []
+        current_probabilities = []
+        current_prob_matrix = []
         
         for data in loader:  # Iterate in batches over the training/test dataset.
             if data.y.shape[0]>1:
@@ -487,7 +543,7 @@ class trainer_tester:
                 # print("data.y", data.y)
                 loss = None
                 if self.parser_args.loss == "CoxPHLoss":#  or self.parser_args.loss=="NegativeLogLikelihood":
-                    loss = self.setup_args.criterion(out, data.y.to(self.device), data.is_censored.to(self.device))  # Compute the loss.    
+                    loss = self.setup_args.criterion(out, data.y.to(self.device), events_from_censored(data.is_censored).to(self.device))  # Compute the loss.    
                 else:
                     if self.label_type == "classification":
                         if self.num_classes == 1:
@@ -507,15 +563,11 @@ class trainer_tester:
                         if self.num_classes == 1:
                             # Binary classification
                             probs = torch.sigmoid(out.squeeze()).detach().cpu().numpy()
-                            if not hasattr(self, 'current_probabilities'):
-                                self.current_probabilities = []
-                            self.current_probabilities.extend(probs.tolist())
+                            current_probabilities.extend(probs.tolist())
                         else:
                             # Multi-class classification
                             probs = torch.softmax(out, dim=1).detach().cpu().numpy()
-                            if not hasattr(self, 'current_prob_matrix'):
-                                self.current_prob_matrix = []
-                            self.current_prob_matrix.extend(probs.tolist())
+                            current_prob_matrix.extend(probs.tolist())
                     else:
                         loss = self.setup_args.criterion(out.squeeze(), data.y.to(self.device))  # Compute the loss.
                         true_list.extend([round(val.item(),6) for val in data.y])
@@ -530,7 +582,7 @@ class trainer_tester:
                     pid_list.extend([val for val in data.p_id])
                     img_list.extend([val for val in data.img_id])
                     
-                elif return_pred_df  and self.parser_args.label in ["Relapse","Progression"]:
+                elif return_pred_df  and self.parser_args.label in ["Relapse","Progression", "CLR_DII", "PFS_short"]:
 
                     # print(data) osmonth=[64], sample_id=[64], img_id=[64], clinical_type=[64], disease_stage=[64]
 
@@ -567,23 +619,18 @@ class trainer_tester:
                columns =["Patient ID","Image Number", 'True Value', 'Predicted', "Tumor Grade", "Clinical Type", "OS Month", "Censored", "Fold#-Set"])
             else:
                 
-                df = pd.DataFrame(list(zip(sample_id_list, img_list, true_list, pred_list, progression_list, clinical_type_list, osmonth_list,  label_list)), columns =["Sample ID","Image Number", 'True Value', 'Predicted', "Progression", "Clinical Type", "OS Month", "Fold#-Set"])
+                df = pd.DataFrame(
+                    list(zip(sample_id_list, img_list, true_list, pred_list, progression_list, clinical_type_list, osmonth_list,  label_list)),
+                    columns=["Sample ID", "Image Number", "True Value", "Predicted", self.parser_args.label, "Clinical Type", "OS Month", "Fold#-Set"],
+                )
                 # Add probabilities for AUC
                 if self.label_type == "classification":
-                    if hasattr(self, 'current_probabilities'):
-                        if self.num_classes == 1 or self.num_classes == 2:
-                            # Binary classification
-                            df['Probabilities'] = self.current_probabilities[:len(df)]
-                            # Clear the probabilities after using them
-                            self.current_probabilities = []
-                        else:
-                            # Multi-class classification
-                            if hasattr(self, 'current_prob_matrix'):
-                                prob_matrix = np.array(self.current_prob_matrix[:len(df)])
-                                for i in range(prob_matrix.shape[1]):
-                                    df[str(i)] = prob_matrix[:, i]
-                                # Clear the probability matrix after using it
-                                self.current_prob_matrix = []
+                    if self.num_classes == 1 or self.num_classes == 2:
+                        df['Probabilities'] = current_probabilities[:len(df)]
+                    else:
+                        prob_matrix = np.array(current_prob_matrix[:len(df)])
+                        for i in range(prob_matrix.shape[1]):
+                            df[str(i)] = prob_matrix[:, i]
             return total_loss, df
         else:
             return total_loss
@@ -622,7 +669,7 @@ class trainer_tester:
                 epoch_val_score = 0.0
                 auc_score = None
                 if self.parser_args.loss == "CoxPHLoss":
-                    epoch_val_score = concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"]) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"])
+                    epoch_val_score = concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], events_from_censored(df_epoch_val["Censored"])) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], events_from_censored(df_epoch_val["Censored"]))
                 else:
                     
                     # --- AUC Calculation ---
@@ -686,8 +733,7 @@ class trainer_tester:
                         'auprc': epoch_auprc
                     }
                     
-                    # Use accuracy as the primary validation score for classification
-                    epoch_val_score = epoch_accuracy
+                    primary_metric_name, epoch_val_score = self.get_primary_classification_metric(val_scores)
                     
                 """# Print per-epoch metrics
                 if self.label_type == "classification":
@@ -704,7 +750,18 @@ class trainer_tester:
                 else:
                     pbar.set_description(f"Fold {fold_dict['fold']} | Train loss: {train_loss:.2f} Val. loss: {validation_loss:.2f} Best val. score: {early_stopping.best_eval_score:.3f} Patience: {early_stopping.counter}")"""
                 if self.label_type == "classification":
-                    print(f"Epoch {epoch} | Fold {fold_dict['fold']} | Val Loss: {validation_loss:.4f} | Best Val Acc: {early_stopping.best_val_scores.get('accuracy', None):.4f} | Best Val Prec: {early_stopping.best_val_scores.get('precision', None):.4f} | Best Val Rec: {early_stopping.best_val_scores.get('recall', None):.4f} | Best Val F1: {early_stopping.best_val_scores.get('f1', None):.4f} | Best Val AUC: {early_stopping.best_val_scores.get('auc', None):.4f} | Best Val AUPRC: {early_stopping.best_val_scores.get('auprc', None):.4f}")
+                    selected_metric_name = primary_metric_name if 'primary_metric_name' in locals() else "accuracy"
+                    selected_metric_value = early_stopping.best_val_scores.get(selected_metric_name, None)
+                    print(
+                        f"Epoch {epoch} | Fold {fold_dict['fold']} | Val Loss: {validation_loss:.4f} | "
+                        f"Best Val {selected_metric_name.upper()}: {self.format_metric(selected_metric_value)} | "
+                        f"Best Val Acc: {self.format_metric(early_stopping.best_val_scores.get('accuracy', None))} | "
+                        f"Best Val Prec: {self.format_metric(early_stopping.best_val_scores.get('precision', None))} | "
+                        f"Best Val Rec: {self.format_metric(early_stopping.best_val_scores.get('recall', None))} | "
+                        f"Best Val F1: {self.format_metric(early_stopping.best_val_scores.get('f1', None))} | "
+                        f"Best Val AUC: {self.format_metric(early_stopping.best_val_scores.get('auc', None))} | "
+                        f"Best Val AUPRC: {self.format_metric(early_stopping.best_val_scores.get('auprc', None))}"
+                    )
 
                 if early_stopping.early_stop or epoch==self.parser_args.epoch-1:
                     # Save best metrics for this fold from early stopping
@@ -907,7 +964,16 @@ class trainer_tester:
         rmse_results = []
         accuracy_results =[] 
         precision_results =[] 
+        recall_results =[]
         f1_results =[] 
+        auc_results = []
+        auprc_results = []
+        val_auc_results = []
+        val_precision_results = []
+        val_recall_results = []
+        val_auprc_results = []
+        val_accuracy_results = []
+        val_f1_results = []
 
         
         if self.label_type == "regression" and self.parser_args.loss=="CoxPHLoss":
@@ -927,14 +993,49 @@ class trainer_tester:
                 rmse_results.append(rmse)
 
         elif self.label_type == "classification":
-            for _,train,valid,test,accuracy,precision,f1 in self.results:
-                train_results.append(train)
-                valid_results.append(valid)
-                test_results.append(test)
-
-                accuracy_results.append(accuracy)
-                precision_results.append(precision)
-                f1_results.append(f1)
+            if self.results and len(self.results[0]) >= 15:
+                for row in self.results:
+                    (
+                        _fold,
+                        train,
+                        valid,
+                        test,
+                        accuracy,
+                        test_auc,
+                        precision,
+                        recall,
+                        test_auprc,
+                        val_auc,
+                        val_precision,
+                        val_recall,
+                        val_auprc,
+                        val_accuracy,
+                        val_f1,
+                    ) = row[:15]
+                    train_results.append(train)
+                    valid_results.append(valid)
+                    test_results.append(test)
+                    accuracy_results.append(accuracy)
+                    auc_results.append(test_auc)
+                    precision_results.append(precision)
+                    recall_results.append(recall)
+                    auprc_results.append(test_auprc)
+                    val_auc_results.append(val_auc)
+                    val_precision_results.append(val_precision)
+                    val_recall_results.append(val_recall)
+                    val_auprc_results.append(val_auprc)
+                    val_accuracy_results.append(val_accuracy)
+                    val_f1_results.append(val_f1)
+                    if precision is not None and recall is not None:
+                        f1_results.append(2 * precision * recall / (precision + recall) if (precision + recall) else 0.0)
+            else:
+                for _,train,valid,test,accuracy,precision,f1 in self.results:
+                    train_results.append(train)
+                    valid_results.append(valid)
+                    test_results.append(test)
+                    accuracy_results.append(accuracy)
+                    precision_results.append(precision)
+                    f1_results.append(f1)
 
         if self.label_type == "regression":
 
@@ -950,16 +1051,66 @@ class trainer_tester:
                 variances = [["Variance", round(train_results[0], 4), round(valid_results[0], 4), round(test_results[0], 4), r2_results[0],mse_results[0],rmse_results[0]]]
         
         elif self.label_type == "classification":
-
-            header = ["fold_number","train","validation","accuracy","precision","f1"]
-            if self.setup_args.use_fold:
-                means = [["Mean", round(statistics.mean(train_results), 4), round(statistics.mean(valid_results), 4), round(statistics.mean(test_results), 4), statistics.mean(accuracy_results), statistics.mean(precision_results), statistics.mean(f1_results)]]
-                variances = [["Variance", round(statistics.variance(train_results), 4) ,round(statistics.variance(valid_results), 4), round(statistics.variance(test_results), 4), statistics.variance(accuracy_results), statistics.mean(precision_results), statistics.mean(f1_results)]]
-
+            if self.results and len(self.results[0]) >= 15:
+                header = [
+                    "fold_number",
+                    "train",
+                    "validation",
+                    "test",
+                    "test_accuracy",
+                    "test_auc",
+                    "test_precision",
+                    "test_recall",
+                    "test_auprc",
+                    "val_auc",
+                    "val_precision",
+                    "val_recall",
+                    "val_auprc",
+                    "val_accuracy",
+                    "val_f1",
+                ]
+                means = [[
+                    "Mean",
+                    round(train_results[0], 4),
+                    round(valid_results[0], 4),
+                    round(test_results[0], 4),
+                    accuracy_results[0],
+                    auc_results[0],
+                    precision_results[0],
+                    recall_results[0],
+                    auprc_results[0],
+                    val_auc_results[0],
+                    val_precision_results[0],
+                    val_recall_results[0],
+                    val_auprc_results[0],
+                    val_accuracy_results[0],
+                    val_f1_results[0],
+                ]]
+                variances = [[
+                    "Variance",
+                    round(train_results[0], 4),
+                    round(valid_results[0], 4),
+                    round(test_results[0], 4),
+                    accuracy_results[0],
+                    auc_results[0],
+                    precision_results[0],
+                    recall_results[0],
+                    auprc_results[0],
+                    val_auc_results[0],
+                    val_precision_results[0],
+                    val_recall_results[0],
+                    val_auprc_results[0],
+                    val_accuracy_results[0],
+                    val_f1_results[0],
+                ]]
             else:
-
-                means = [["Mean", round(train_results[0], 4), round(valid_results[0], 4), round(test_results[0], 4),accuracy_results[0],precision_results[0],f1_results[0]]]
-                variances = [["Variance", round(train_results[0], 4), round(valid_results[0], 4), round(test_results[0], 4), accuracy_results[0],precision_results[0],f1_results[0]]]
+                header = ["fold_number","train","validation","test","accuracy","precision","f1"]
+                if self.setup_args.use_fold:
+                    means = [["Mean", round(statistics.mean(train_results), 4), round(statistics.mean(valid_results), 4), round(statistics.mean(test_results), 4), statistics.mean(accuracy_results), statistics.mean(precision_results), statistics.mean(f1_results)]]
+                    variances = [["Variance", round(statistics.variance(train_results), 4) ,round(statistics.variance(valid_results), 4), round(statistics.variance(test_results), 4), statistics.variance(accuracy_results), statistics.mean(precision_results), statistics.mean(f1_results)]]
+                else:
+                    means = [["Mean", round(train_results[0], 4), round(valid_results[0], 4), round(test_results[0], 4),accuracy_results[0],precision_results[0],f1_results[0]]]
+                    variances = [["Variance", round(train_results[0], 4), round(valid_results[0], 4), round(test_results[0], 4), accuracy_results[0],precision_results[0],f1_results[0]]]
 
         ff = open(os.path.join(self.setup_args.RESULT_PATH, f"{str(self.setup_args.id)}.csv"), 'w')
         ff.close()
@@ -1002,7 +1153,7 @@ class trainer_tester:
             epoch_val_score = 0.0
             auc_score = None
             if self.parser_args.loss == "CoxPHLoss":
-                epoch_val_score = concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"]) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], df_epoch_val["Censored"])
+                epoch_val_score = concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], events_from_censored(df_epoch_val["Censored"])) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_val['OS Month'], -df_epoch_val['Predicted'], events_from_censored(df_epoch_val["Censored"]))
             else:
                 correct = (df_epoch_val['True Value'] == df_epoch_val['Predicted']).sum()
                 accuracy = correct / len(df_epoch_val)
@@ -1058,8 +1209,7 @@ class trainer_tester:
                         'auprc': auprc
                     }
                     
-                    # Use accuracy as the primary validation score for classification
-                    epoch_val_score = accuracy
+                    primary_metric_name, epoch_val_score = self.get_primary_classification_metric(val_scores)
                 else:
                     epoch_val_score = auc_score
             
@@ -1067,7 +1217,7 @@ class trainer_tester:
             epoch_test_score = 0.0
             test_auc_score = None
             if self.parser_args.loss == "CoxPHLoss":
-                epoch_test_score = concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], df_epoch_test["Censored"]) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], df_epoch_test["Censored"])
+                epoch_test_score = concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], events_from_censored(df_epoch_test["Censored"])) if self.parser_args.loss=="NegativeLogLikelihood" else concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], events_from_censored(df_epoch_test["Censored"]))
             else:
                 correct_test = (df_epoch_test['True Value'] == df_epoch_test['Predicted']).sum()
                 test_accuracy = correct_test / len(df_epoch_test)
@@ -1108,7 +1258,16 @@ class trainer_tester:
             
             # Print per-epoch metrics
             if self.label_type == "classification":
-                print(f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {validation_loss:.4f} | Test Loss: {test_loss:.4f} | Val F1: {epoch_val_score:.4f} | Val AUC: {auc_score:.4f} | Test F1: {test_f1:.4f} | Test AUC: {test_auc_score:.4f} | Val Acc: {accuracy:.4f} | Test Acc: {test_accuracy:.4f}")
+                selected_metric_name = primary_metric_name if 'primary_metric_name' in locals() else "accuracy"
+                print(
+                    f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {validation_loss:.4f} | Test Loss: {test_loss:.4f} | "
+                    f"Primary Val {selected_metric_name.upper()}: {epoch_val_score:.4f} | "
+                    f"Val AUPRC: {self.format_metric(auprc if 'auprc' in locals() else None)} | "
+                    f"Val AUC: {self.format_metric(auc_score)} | "
+                    f"Test AUPRC: {self.format_metric(test_auprc if 'test_auprc' in locals() else None)} | "
+                    f"Test AUC: {self.format_metric(test_auc_score)} | "
+                    f"Val Acc: {accuracy:.4f} | Test Acc: {test_accuracy:.4f}"
+                )
             else:
                 print(f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {validation_loss:.4f} | Test Loss: {test_loss:.4f} | Val Score: {epoch_val_score:.4f} | Test Score: {epoch_test_score:.4f}")
 
@@ -1116,7 +1275,8 @@ class trainer_tester:
             
             early_stopping(validation_loss, epoch_val_score, fold_dict["model"], vars(self.parser_args), id_file_name=self.setup_args.id, deg=fold_dict["deg"] if self.parser_args.model in ["PNAConv", "MMAConv", "GMNConv"] else None, val_scores=val_scores if 'val_scores' in locals() else None)
             if self.label_type == "classification":
-                pbar.set_description(f"Fold {fold_dict['fold']} | Train loss: {train_loss:.2f} Val loss: {validation_loss:.2f} Test loss: {test_loss:.2f} Best Val Acc: {early_stopping.best_eval_score:.3f} Patience: {early_stopping.counter}")
+                selected_metric_name = primary_metric_name if 'primary_metric_name' in locals() else "accuracy"
+                pbar.set_description(f"Fold {fold_dict['fold']} | Train loss: {train_loss:.2f} Val loss: {validation_loss:.2f} Test loss: {test_loss:.2f} Best Val {selected_metric_name.upper()}: {early_stopping.best_eval_score:.3f} Patience: {early_stopping.counter}")
             else:
                 pbar.set_description(f"Fold {fold_dict['fold']} | Train: {train_loss:.2f} Val: {validation_loss:.2f} Test: {test_loss:.2f} Val Score: {epoch_val_score:.3f} Test Score: {epoch_test_score:.3f} Best val: {early_stopping.best_eval_score:.3f} Patience: {early_stopping.counter}")
 
@@ -1125,6 +1285,11 @@ class trainer_tester:
                 best_fold_loss = early_stopping.val_loss_min
                 best_fold_score = early_stopping.best_eval_score
                 best_fold_auc = early_stopping.best_val_scores.get('auc', None)
+                best_fold_precision = early_stopping.best_val_scores.get('precision', None)
+                best_fold_recall = early_stopping.best_val_scores.get('recall', None)
+                best_fold_auprc = early_stopping.best_val_scores.get('auprc', None)
+                best_fold_accuracy = early_stopping.best_val_scores.get('accuracy', None)
+                best_fold_f1 = early_stopping.best_val_scores.get('f1', None)
                 
                 # Store results for this split
                 if self.label_type == "classification":
@@ -1134,22 +1299,51 @@ class trainer_tester:
                     
                     # Calculate test AUC if applicable
                     test_auc = None
+                    test_precision = None
+                    test_recall = None
+                    test_auprc = None
+                    test_f1 = None
                     if self.num_classes == 2 or self.num_classes == 1:
                         y_true_test = df_epoch_test["True Value"].values
                         y_score_test = df_epoch_test["Probabilities"].values if "Probabilities" in df_epoch_test else None
+                        y_pred_test = df_epoch_test["Predicted"].values
                         if y_score_test is not None:
                             test_auc = roc_auc_score(y_true_test, y_score_test)
+                            test_auprc = average_precision_score(y_true_test, y_score_test)
+                        test_precision = precision_score(y_true_test, y_pred_test, average='binary', zero_division=0)
+                        test_recall = recall_score(y_true_test, y_pred_test, average='binary', zero_division=0)
+                        test_f1 = f1_score(y_true_test, y_pred_test, average='binary', zero_division=0)
                     elif self.num_classes > 2:
                         y_true_test = df_epoch_test["True Value"].values
                         y_score_test = df_epoch_test[[str(i) for i in range(self.num_classes)]].values if all(str(i) in df_epoch_test.columns for i in range(self.num_classes)) else None
+                        y_pred_test = df_epoch_test["Predicted"].values
                         if y_score_test is not None:
                             test_auc = roc_auc_score(y_true_test, y_score_test, multi_class='ovr', average='macro')
-                    
-                    self.results.append([fold_dict['fold'], train_loss, validation_loss, test_loss, test_accuracy, test_auc, best_fold_auc])
+                        test_precision = precision_score(y_true_test, y_pred_test, average='macro', zero_division=0)
+                        test_recall = recall_score(y_true_test, y_pred_test, average='macro', zero_division=0)
+                        test_f1 = f1_score(y_true_test, y_pred_test, average='macro', zero_division=0)
+
+                    self.results.append([
+                        fold_dict['fold'],
+                        train_loss,
+                        validation_loss,
+                        test_loss,
+                        test_accuracy,
+                        test_auc,
+                        test_precision,
+                        test_recall,
+                        test_auprc,
+                        best_fold_auc,
+                        best_fold_precision,
+                        best_fold_recall,
+                        best_fold_auprc,
+                        best_fold_accuracy,
+                        best_fold_f1,
+                    ])
                 else:
                     # Regression case
                     if self.parser_args.loss == "CoxPHLoss":
-                        test_ci = concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], df_epoch_test["Censored"])
+                        test_ci = concordance_index(df_epoch_test['OS Month'], -df_epoch_test['Predicted'], events_from_censored(df_epoch_test["Censored"]))
                         self.results.append([fold_dict['fold'], train_loss, validation_loss, test_loss, test_ci])
                     else:
                         # Calculate regression metrics
@@ -1165,23 +1359,70 @@ class trainer_tester:
                 break
 
         # Save results
+        if early_stopping.best_model_state is not None:
+            fold_dict["model"].load_state_dict(early_stopping.best_model_state)
+            fold_dict["model"].to(self.device)
+
+        # Predictions of the selected checkpoint, not of the last epoch.
+        train_loss, df_epoch_train = self.test(
+            fold_dict["model"],
+            fold_dict["train_loader"],
+            fold_dict["fold"],
+            "train",
+            self.setup_args.plot_result,
+        )
+        validation_loss, df_epoch_val = self.test(
+            fold_dict["model"],
+            fold_dict["validation_loader"],
+            fold_dict["fold"],
+            "validation",
+            self.setup_args.plot_result,
+        )
+        test_loss, df_epoch_test = self.test(
+            fold_dict["model"],
+            fold_dict["test_loader"],
+            fold_dict["fold"],
+            "test",
+            self.setup_args.plot_result,
+        )
+
+        if self.label_type == "classification":
+            y_true_val = df_epoch_val["True Value"].values
+            y_pred_val = df_epoch_val["Predicted"].values
+            y_score_val = df_epoch_val["Probabilities"].values if "Probabilities" in df_epoch_val else None
+            val_accuracy = (y_true_val == y_pred_val).sum() / len(df_epoch_val)
+            val_auc = roc_auc_score(y_true_val, y_score_val) if y_score_val is not None else None
+            val_precision = precision_score(y_true_val, y_pred_val, average='binary', zero_division=0)
+            val_recall = recall_score(y_true_val, y_pred_val, average='binary', zero_division=0)
+            val_f1 = f1_score(y_true_val, y_pred_val, average='binary', zero_division=0)
+            val_auprc = average_precision_score(y_true_val, y_score_val) if y_score_val is not None else None
+
+            y_true_test = df_epoch_test["True Value"].values
+            y_pred_test = df_epoch_test["Predicted"].values
+            y_score_test = df_epoch_test["Probabilities"].values if "Probabilities" in df_epoch_test else None
+            test_accuracy = (y_true_test == y_pred_test).sum() / len(df_epoch_test)
+            test_auc = roc_auc_score(y_true_test, y_score_test) if y_score_test is not None else None
+            test_precision = precision_score(y_true_test, y_pred_test, average='binary', zero_division=0)
+            test_recall = recall_score(y_true_test, y_pred_test, average='binary', zero_division=0)
+            test_f1 = f1_score(y_true_test, y_pred_test, average='binary', zero_division=0)
+            test_auprc = average_precision_score(y_true_test, y_score_test) if y_score_test is not None else None
+
         if self.label_type == "classification":
             # Save classification metrics
             self.parser_args.average_val_score = fold_val_scores[0] if fold_val_scores else 0.0
             self.parser_args.fold_val_scores = fold_val_scores
-            # Save individual metrics from results
-            if self.results:
-                result = self.results[0]  # Only one result for train/val/test split
-                self.parser_args.test_accuracy = result[4] if len(result) > 4 else None
-                self.parser_args.test_auc = result[5] if len(result) > 5 else None
-                self.parser_args.test_precision = result[6] if len(result) > 6 else None
-                self.parser_args.test_recall = result[7] if len(result) > 7 else None
-                self.parser_args.test_auprc = result[8] if len(result) > 8 else None
-                self.parser_args.val_auc = result[9] if len(result) > 9 else None
-                self.parser_args.val_precision = result[10] if len(result) > 10 else None
-                self.parser_args.val_recall = result[11] if len(result) > 11 else None
-                self.parser_args.val_auprc = result[12] if len(result) > 12 else None
-                self.parser_args.val_accuracy = result[13] if len(result) > 13 else None
+            self.parser_args.test_accuracy = test_accuracy
+            self.parser_args.test_auc = test_auc
+            self.parser_args.test_precision = test_precision
+            self.parser_args.test_recall = test_recall
+            self.parser_args.test_auprc = test_auprc
+            self.parser_args.val_auc = val_auc
+            self.parser_args.val_precision = val_precision
+            self.parser_args.val_recall = val_recall
+            self.parser_args.val_auprc = val_auprc
+            self.parser_args.val_accuracy = val_accuracy
+            self.parser_args.val_f1 = val_f1
+            self.parser_args.test_f1 = test_f1
         else:
             # Save regression metrics
             self.parser_args.ci_score = fold_val_scores[0] if fold_val_scores else 0.0
@@ -1196,12 +1437,11 @@ class trainer_tester:
         
         # Save detailed results
         self.save_results()
-        
-        # Save test predictions
-        if self.label_type == "regression":
-            df_epoch_test.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_test_predictions.csv"), index=False)
-        else:
-            df_epoch_test.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_test_predictions.csv"), index=False)
+
+        # Per-split predictions (used for the ROC and PR curves).
+        df_epoch_train.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_train_predictions.csv"), index=False)
+        df_epoch_val.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_validation_predictions.csv"), index=False)
+        df_epoch_test.to_csv(os.path.join(self.setup_args.RESULT_PATH, f"{self.setup_args.id}_test_predictions.csv"), index=False)
         
         print(f"Train/Val/Test training completed!")
         print(f"Average validation score: {fold_val_scores[0]}")

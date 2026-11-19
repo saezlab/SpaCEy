@@ -47,7 +47,7 @@ class TissueDataset(InMemoryDataset):
         super().__init__(root, transform, pre_transform)
         print(f"Target prediction: {wanted_label}")
         
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
 
     @property
     def raw_file_names(self):
@@ -162,7 +162,7 @@ class LungDataset(InMemoryDataset):
         super().__init__(root, transform, pre_transform)
         print(f"Target prediction: {wanted_label}")
         print("processed_paths", self.processed_paths)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
 
     @property
     def raw_file_names(self):
@@ -284,3 +284,155 @@ class LungDataset(InMemoryDataset):
         if self.wanted_label == "tumor_grade":
             labels = [data.y.item() for data in data_list]
             print("Unique tumor_grade labels:", set(labels))
+
+
+class CodexCRCDataset(InMemoryDataset):
+    def __init__(self, root, wanted_label="CLR_DII", transform=None, pre_transform=None):
+        custom_tools.set_seeds(42)
+        self.wanted_label = wanted_label
+        super().__init__(root, transform, pre_transform)
+        print(f"Target prediction: {wanted_label}")
+        print("processed_paths", self.processed_paths)
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
+
+    @property
+    def raw_file_names(self):
+        return ["merged_preprocessed_dataset.csv"]
+
+    @property
+    def processed_file_names(self):
+        return [f"data_{self.wanted_label}.pt"]
+
+    def download(self):
+        pass
+
+    def process(self):
+        data_list = []
+        count = 0
+
+        for fl in os.listdir(os.path.join(self.root, "raw")):
+            if fl.endswith("features.pickle"):
+                img_pid = fl.split("_features.pickle")[0]
+
+                with open(os.path.join(self.root, "raw", f"{img_pid}_clinical_info.pickle"), "rb") as handle:
+                    clinical_info_dict = pickle.load(handle)
+
+                if self.wanted_label not in clinical_info_dict:
+                    continue
+
+                with open(os.path.join(self.root, "raw", f"{img_pid}_features.pickle"), "rb") as handle:
+                    feature_arr = np.array(pickle.load(handle))
+
+                with open(os.path.join(self.root, "raw", f"{img_pid}_edge_index_length.pickle"), "rb") as handle:
+                    edge_index_arr, edge_length_arr = pickle.load(handle)
+                    edge_index_arr = np.array(edge_index_arr)
+
+                with open(os.path.join(self.root, "raw", f"{img_pid}_ct_class.pickle"), "rb") as handle:
+                    ct_class_arr = np.array(pickle.load(handle))
+
+                with open(os.path.join(self.root, "raw", f"{img_pid}_coordinates.pickle"), "rb") as handle:
+                    coordinates_arr = np.array(pickle.load(handle))
+
+                y_val = int(clinical_info_dict[self.wanted_label])
+                data = Data(
+                    x=torch.tensor(feature_arr, dtype=torch.float32),
+                    edge_index=torch.tensor(edge_index_arr, dtype=torch.long).t().contiguous(),
+                    pos=torch.tensor(coordinates_arr, dtype=torch.float32),
+                    y=torch.tensor(y_val, dtype=torch.long),
+                    sample_id=str(clinical_info_dict["sample_id"]),
+                    img_id=str(img_pid),
+                    p_id=str(clinical_info_dict["patient_id"]),
+                    clinical_type=str(clinical_info_dict["CLR_DII_label"]),
+                    tumor_grade=str(clinical_info_dict["CLR_DII_label"]),
+                    disease_stage=str(clinical_info_dict["region_id"]),
+                    osmonth=float(0.0),
+                    ct_class=ct_class_arr,
+                )
+
+                data_list.append(data)
+                count += 1
+
+        print(f"Number of samples: {count}")
+        if self.pre_filter is not None:
+            data_list = [data for data in data_list if self.pre_filter(data)]
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])
+
+
+class NSCLCDataset(InMemoryDataset):
+    """NSCLC immunotherapy cohort, read from the graph pickles in raw/ (see the NSCLC helpers in data_processing.py).
+
+    root must contain raw/ with the *_clinical_info.pickle etc. files. Use one root per ROI setting
+    (e.g. data/NSCLC_ROI_low, data/NSCLC_whole): the processed file is cached per label only.
+    wanted_label is an integer label stored in clinical_info (default PFS_short: 1 = short, 0 = long).
+    """
+
+    def __init__(self, root, wanted_label="PFS_short", transform=None, pre_transform=None):
+        custom_tools.set_seeds(42)
+        self.wanted_label = wanted_label
+        super().__init__(root, transform, pre_transform)
+        print(f"Target prediction: {wanted_label}")
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
+
+    @property
+    def raw_file_names(self):
+        return ["sample_labels.csv"]
+
+    @property
+    def processed_file_names(self):
+        return [f"data_{self.wanted_label}.pt"]
+
+    def download(self):
+        pass
+
+    def process(self):
+        raw_dir = os.path.join(self.root, "raw")
+        data_list = []
+        skipped = 0
+
+        for fl in sorted(os.listdir(raw_dir)):
+            if not fl.endswith("_features.pickle"):
+                continue
+            img_pid = fl[: -len("_features.pickle")]
+
+            def _load(suffix):
+                with open(os.path.join(raw_dir, f"{img_pid}_{suffix}.pickle"), "rb") as handle:
+                    return pickle.load(handle)
+
+            info = _load("clinical_info")
+            if info.get(self.wanted_label) is None:
+                skipped += 1
+                continue
+
+            edge_index_arr, _ = _load("edge_index_length")
+            pfs_days = info.get("PFS_days")
+            data_list.append(Data(
+                x=torch.tensor(np.asarray(_load("features")), dtype=torch.float32),
+                edge_index=torch.tensor(np.asarray(edge_index_arr), dtype=torch.long).reshape(-1, 2).t().contiguous(),
+                pos=torch.tensor(np.asarray(_load("coordinates")), dtype=torch.float32),
+                y=torch.tensor(int(info[self.wanted_label]), dtype=torch.long),
+                sample_id=str(info["sample_id"]),
+                img_id=str(img_pid),
+                p_id=str(info["patient_id"]),
+                # String fields the trainers copy into their prediction tables.
+                clinical_type=str(info.get("Tissue")),
+                tumor_grade=str(info.get("roi_label")),
+                disease_stage=str(info.get("Sample type")),
+                osmonth=float(pfs_days) if pfs_days is not None else float("nan"),  # PFS days, informational only
+                ct_class=np.asarray(_load("ct_class")),
+            ))
+
+        print(f"Number of samples: {len(data_list)} (skipped {skipped} without {self.wanted_label})")
+        if not data_list:
+            raise RuntimeError(f"No graphs with label {self.wanted_label!r} in {raw_dir}")
+        if self.pre_filter is not None:
+            data_list = [data for data in data_list if self.pre_filter(data)]
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])

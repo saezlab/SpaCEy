@@ -234,4 +234,3 @@ dependencies:
     - wrapt==1.13.3
     - yarl==1.7.2
     - zipp==3.7.0
-prefix: /net/data.isilon/ag-saez/bq_arifaioglu/miniconda3/envs/py_gem_gpu

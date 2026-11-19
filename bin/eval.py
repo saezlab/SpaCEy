@@ -258,7 +258,7 @@ def _concordance_summary_statistics(event_times, predicted_event_times, event_ob
         return (0, 0, 0)
 
     died_mask = event_observed.astype(bool)
-    # TODO: is event_times already sorted? That would be nice...
+    
     died_truth = event_times[died_mask]
     ix = np.argsort(died_truth)
     died_truth = died_truth[ix]
@@ -416,3 +416,11 @@ def _preprocess_scoring_data(event_times, predicted_scores, event_observed):
             raise ValueError("NaNs detected in inputs, please correct or drop.")
 
     return event_times, predicted_scores, event_observed
+
+
+def risk_concordance_index(event_times, risk, event_observed) -> float:
+    """C-index of risk scores (higher risk = shorter survival); NaN when it is undefined (e.g. no events)."""
+    try:
+        return float(concordance_index(event_times, -risk, event_observed))
+    except Exception:
+        return float("nan")

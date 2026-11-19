@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import custom_tools
+from copy import deepcopy
 
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
@@ -29,6 +30,7 @@ class EarlyStopping:
         self.trace_func = trace_func
         self.best_eval_score = None
         self.best_val_scores = {}  # Dictionary to store all validation scores
+        self.best_model_state = None
         # self.best_model = None
     def __call__(self, val_loss, eval_score, model, hyperparams, id_file_name, deg=None, val_scores=None):
 
@@ -83,6 +85,10 @@ class EarlyStopping:
             self.trace_func(f'Best eval score increased ({self.best_eval_score:.2f} --> {eval_score:.2f}).  Saving checkpoint model ...')
         self.val_loss_min = val_loss
         self.best_eval_score = eval_score
+        self.best_model_state = {
+            key: value.detach().cpu().clone()
+            for key, value in deepcopy(model.state_dict()).items()
+        }
 
         # vars(self.parser_args)
         if save_model:

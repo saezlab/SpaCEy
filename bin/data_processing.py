@@ -1,11 +1,16 @@
+import collections
 import os
+import re
 import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from typing import List
+from torch_geometric.utils import subgraph
 import pandas as pd
 import seaborn as sns
-from scipy.spatial import Delaunay, Voronoi, voronoi_plot_2d
+from scipy.spatial import Delaunay, Voronoi, cKDTree, voronoi_plot_2d
 from tqdm import tqdm
 
 # dataset = "METABRIC"
@@ -447,7 +452,7 @@ def create_graphs_delauney_triangulation(df_dataset, cell_count_thr=CELL_COUNT_T
         else:
             # points = df_image[["Location_Center_X", "Location_Center_Y"]].to_numpy()
             # generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Center_X", loc_y_col="Center_Y", pos=None, plot = plot, PLOT_PATH=PLOT_PATH)
-            generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos=None, plot = plot, PLOT_PATH=PLOT_PATH)
+            generate_graphs_using_points(df_image, imgnum_edge_thr_dict, img_num, pid, loc_x_col="Location_Center_X", loc_y_col="Location_Center_Y", pos=None, plot = plot, PLOT_PATH=PLOT_PATH, RAW_DATA_PATH=RAW_DATA_PATH)
        
 def check_cell_ids_sequential():
     df_dataset = get_dataset_from_csv()
@@ -586,6 +591,8 @@ CODEX_CRC_PREPROCESSED_EXCLUDE_COLUMNS = {
     "area_pixels",
     "patient_id",
     "group_id",
+    "CLR_DII",
+    "CLR_DII_label",
     "spot_id",
     "region_id",
     "TMA_AB",
@@ -616,6 +623,11 @@ CODEX_CRC_PREPROCESSED_EXCLUDE_COLUMNS = {
     "treg_pd1_positive",
 }
 
+CODEX_CRC_GROUP_LABEL_MAP = {
+    1: "CLR",
+    2: "DII",
+}
+
 
 def get_codex_crc_feature_columns(df_dataset):
     if {"sample_id", "Location_Center_X", "Location_Center_Y"}.issubset(df_dataset.columns):
@@ -633,16 +645,42 @@ def get_codex_crc_feature_columns(df_dataset):
     return feature_cols
 
 
+def write_codex_crc_label_metadata(df_dataset, RAW_DATA_PATH):
+    label_rows = (
+        df_dataset[
+            [
+                "sample_id",
+                "patient_id",
+                "group_id",
+                "CLR_DII",
+                "CLR_DII_label",
+                "spot_id",
+                "region_id",
+                "TMA_AB",
+                "TMA_12",
+            ]
+        ]
+        .drop_duplicates()
+        .sort_values(["patient_id", "sample_id"])
+    )
+    label_rows.to_csv(os.path.join(RAW_DATA_PATH, "sample_labels.csv"), index=False)
+
+
 def create_preprocessed_codex_crc_dataset(data_path, RAW_DATA_PATH):
     os.makedirs(RAW_DATA_PATH, exist_ok=True)
 
     df_dataset = get_dataset_from_csv(data_path, index_col=None)
 
     if {"sample_id", "cell_type", "Location_Center_X", "Location_Center_Y"}.issubset(df_dataset.columns):
+        if "CLR_DII_label" not in df_dataset.columns:
+            df_dataset["CLR_DII_label"] = df_dataset["group_id"].map(CODEX_CRC_GROUP_LABEL_MAP)
+        if "CLR_DII" not in df_dataset.columns:
+            df_dataset["CLR_DII"] = df_dataset["group_id"].map({1: 0, 2: 1}).astype(int)
         feature_cols = get_codex_crc_feature_columns(df_dataset)
         merged_output_path = os.path.join(RAW_DATA_PATH, "merged_preprocessed_dataset.csv")
         if os.path.abspath(data_path) != os.path.abspath(merged_output_path):
             df_dataset.to_csv(merged_output_path, index=False)
+        write_codex_crc_label_metadata(df_dataset, RAW_DATA_PATH=RAW_DATA_PATH)
         return df_dataset, feature_cols
 
     feature_cols = get_codex_crc_feature_columns(df_dataset)
@@ -722,8 +760,11 @@ def create_preprocessed_codex_crc_dataset(data_path, RAW_DATA_PATH):
     ] + feature_cols
 
     df_preprocessed = df_dataset[columns_to_keep].rename(columns=rename_columns)
+    df_preprocessed["CLR_DII_label"] = df_preprocessed["group_id"].map(CODEX_CRC_GROUP_LABEL_MAP)
+    df_preprocessed["CLR_DII"] = df_preprocessed["group_id"].map({1: 0, 2: 1}).astype(int)
     merged_output_path = os.path.join(RAW_DATA_PATH, "merged_preprocessed_dataset.csv")
     df_preprocessed.to_csv(merged_output_path, index=False)
+    write_codex_crc_label_metadata(df_preprocessed, RAW_DATA_PATH=RAW_DATA_PATH)
 
     return df_preprocessed, feature_cols
 
@@ -797,6 +838,8 @@ def generate_graphs_using_points_codex_crc(df_image, imgnum_edge_thr_dict, img_n
         "sample_id": sample_id if not pos else f"{sample_id}_{pos}",
         "patient_id": df_image["patient_id"].iloc[0],
         "group_id": df_image["group_id"].iloc[0],
+        "CLR_DII": int(df_image["CLR_DII"].iloc[0]),
+        "CLR_DII_label": df_image["CLR_DII_label"].iloc[0],
         "spot_id": df_image["spot_id"].iloc[0],
         "region_id": df_image["region_id"].iloc[0],
         "TMA_AB": df_image["TMA_AB"].iloc[0],
@@ -885,3 +928,155 @@ def data_processing_codex_crc_pipeline(data_path, CELL_COUNT_THR=CELL_COUNT_THR,
         RAW_DATA_PATH=RAW_DATA_PATH,
         PLOT_PATH=PLOT_PATH,
     )
+
+
+# NSCLC (IO cohort)
+# One .h5ad per image: X holds the (99.9th-percentile clipped, arcsinh transformed) marker
+# intensities, obs holds X_centroid / Y_centroid, cell_type, rough_cell_type and the ROI_high /
+# ROI_low / ROI_random columns (e.g. "low_ROI1"; cells outside every ROI of a group are NaN/empty).
+# The image id is the number after the date in the file name:
+# "20260422_22_R4510_2019_Panel2_TRITC_backsub_processed.h5ad" -> 22.
+
+NSCLC_ROI_GROUPS = ("ROI_low", "ROI_high", "ROI_random")
+NSCLC_IMAGE_ID_CANDIDATES = ("imageid", "image_id", "ImageID", "Image_ID", "Image ID", "image")
+NSCLC_PFS_GROUP_TO_SHORT = {"short": 1, "kurz": 1, "long": 0, "lang": 0}
+
+
+def get_nsclc_image_id(file_name):
+    """Image id encoded after the date in an NSCLC .h5ad file name."""
+    match = re.match(r"^\d{8}_(\d+)_", os.path.basename(file_name))
+    if match is None:
+        raise ValueError(f"Cannot parse the image id from {file_name!r}; expected '<YYYYMMDD>_<imageid>_...'.")
+    return int(match.group(1))
+
+
+def load_nsclc_metadata(metadata_path, image_id_col=None):
+    """Read the PFS metadata csv and index it by integer image id."""
+    df_meta = pd.read_csv(metadata_path)
+    if image_id_col is None:
+        found = [c for c in NSCLC_IMAGE_ID_CANDIDATES if c in df_meta.columns]
+        if not found:
+            raise ValueError(f"No image id column found in {metadata_path}; pass image_id_col. Columns: {list(df_meta.columns)}")
+        image_id_col = found[0]
+    df_meta = df_meta.dropna(subset=[image_id_col])
+    df_meta.index = df_meta[image_id_col].astype(int)
+    if df_meta.index.duplicated().any():
+        raise ValueError(f"Duplicated image ids in {metadata_path}: {sorted(set(df_meta.index[df_meta.index.duplicated()]))}")
+    return df_meta
+
+
+def nsclc_pfs_short_label(pfs_group):
+    """1 = short PFS (progression 30-90 days after IO start), 0 = long PFS (> 1 year), None if missing."""
+    if pd.isna(pfs_group):
+        return None
+    key = str(pfs_group).strip().lower()
+    if key not in NSCLC_PFS_GROUP_TO_SHORT:
+        raise ValueError(f"Unknown PFS_group value {pfs_group!r}; expected one of {sorted(NSCLC_PFS_GROUP_TO_SHORT)}.")
+    return NSCLC_PFS_GROUP_TO_SHORT[key]
+
+
+def delaunay_graph(points, quant=0.975):
+    """Delaunay graph pruned at the given quantile of its edge lengths (the SpaCEy edge threshold).
+
+    Returns (edge_index (E, 2) int32 with both directions, edge_length (E,), threshold)."""
+    simplices = Delaunay(points).simplices
+    edges = np.concatenate([simplices[:, [0, 1]], simplices[:, [1, 2]], simplices[:, [2, 0]]])
+    edges = np.unique(np.sort(edges, axis=1), axis=0)
+    lengths = np.linalg.norm(points[edges[:, 0]] - points[edges[:, 1]], axis=1)
+    edge_thr = float(np.quantile(lengths, quant))
+    keep = lengths < edge_thr
+    edges, lengths = edges[keep], lengths[keep]
+    edge_index = np.concatenate([edges, edges[:, ::-1]]).astype(np.int32)
+    return edge_index, np.concatenate([lengths, lengths]), edge_thr
+
+
+def knn_graph(points, k=6, max_dist=None):
+    """Undirected k-nearest-neighbour graph over the given points.
+
+    Each point is linked to its k nearest neighbours (excluding itself); the directed kNN
+    relation is symmetrised, so an edge is kept if either endpoint has the other among its
+    k nearest. Edges longer than max_dist (if given) are dropped.
+
+    Returns (edge_index (E, 2) int32 with both directions, edge_length (E,)), in the same
+    format as delaunay_graph."""
+    points = np.asarray(points, dtype=float)
+    n = points.shape[0]
+    k = min(int(k), n - 1)
+    if k < 1:
+        return np.empty((0, 2), dtype=np.int32), np.empty(0, dtype=float)
+    dists, nbrs = cKDTree(points).query(points, k=k + 1)
+    # Column 0 is each point's self-match; any self-loop left over from duplicate coordinates is removed below.
+    src = np.repeat(np.arange(n), k)
+    dst = nbrs[:, 1:].ravel()
+    edges = np.unique(np.sort(np.stack([src, dst], axis=1), axis=1), axis=0)
+    edges = edges[edges[:, 0] != edges[:, 1]]
+    lengths = np.linalg.norm(points[edges[:, 0]] - points[edges[:, 1]], axis=1)
+    if max_dist is not None:
+        keep = lengths <= max_dist
+        edges, lengths = edges[keep], lengths[keep]
+    edge_index = np.concatenate([edges, edges[:, ::-1]]).astype(np.int32)
+    return edge_index, np.concatenate([lengths, lengths])
+
+
+def select_nsclc_rois(obs, roi_group="ROI_low", roi_selection="first"):
+    """Map ROI label -> boolean cell mask for one image.
+
+    roi_group: one of NSCLC_ROI_GROUPS, or None for the whole image (label "whole").
+    roi_selection: "first" (lowest ROI number), "all", or an iterable of ROI labels (e.g. ["low_ROI2"])."""
+    if roi_group is None:
+        return {"whole": np.ones(len(obs), dtype=bool)}
+    if roi_group not in NSCLC_ROI_GROUPS:
+        raise ValueError(f"roi_group must be one of {NSCLC_ROI_GROUPS} or None, got {roi_group!r}")
+    if roi_group not in obs.columns:
+        return {}
+
+    roi_col = obs[roi_group].astype("object")
+    labels = sorted(
+        {str(v) for v in roi_col.dropna().unique() if str(v).strip() not in ("", "nan", "None")},
+        key=lambda s: (int(re.search(r"(\d+)$", s).group(1)) if re.search(r"(\d+)$", s) else np.inf, s),
+    )
+    if roi_selection == "first":
+        labels = labels[:1]
+    elif roi_selection != "all":
+        wanted = set(roi_selection)
+        labels = [lbl for lbl in labels if lbl in wanted]
+    return {lbl: (roi_col.astype(str) == lbl).to_numpy() for lbl in labels}
+
+
+# Graph preprocessing for survival training
+
+def edge_distance(g) -> torch.Tensor:
+    src, dst = g.edge_index
+    return (g.pos[src] - g.pos[dst]).norm(dim=1)
+
+
+def prepare_graphs(graphs: List, train_idx: List[int], features: str, edges=None) -> List:
+    """log1p + z-score node features with statistics from the training graphs only; optionally add the
+    cell-cell distance (scaled by the training median) as an edge feature."""
+    if features == "raw" and edges is None:
+        return graphs
+    if features == "log1p_z":
+        train_x = torch.log1p(torch.cat([graphs[i].x for i in train_idx]))
+        mean, std = train_x.mean(0), train_x.std(0).clamp_min(1e-6)
+    if edges == "distance":
+        scale = torch.cat([edge_distance(graphs[i]) for i in train_idx]).median().clamp_min(1e-6)
+    prepared = []
+    for g in graphs:
+        g = g.clone()
+        if features == "log1p_z":
+            g.x = ((torch.log1p(g.x) - mean) / std).clamp(-5, 5)
+        if edges == "distance":
+            g.edge_attr = (edge_distance(g) / scale).unsqueeze(1)
+        prepared.append(g)
+    return prepared
+
+
+def augment(batch, node_drop: float = 0.2, noise_sd: float = 0.1):
+    """Randomly drop cells (with their edges) and add Gaussian noise to the normalised abundances."""
+    keep = torch.rand(batch.num_nodes, device=batch.x.device) >= node_drop
+    keep[batch.ptr[:-1]] = True  # never leave a graph empty
+    edge_index, edge_attr = subgraph(keep, batch.edge_index, getattr(batch, "edge_attr", None),
+                                     relabel_nodes=True, num_nodes=batch.num_nodes)
+    x = batch.x[keep]
+    x = x + noise_sd * torch.randn_like(x)
+    return x, edge_index, batch.batch[keep], edge_attr

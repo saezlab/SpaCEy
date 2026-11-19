@@ -29,6 +29,7 @@ def get_dataset_df(agg="mean"):
     count = 0
     columns = []
     data_list = []
+    censored_list = []
     for fl in os.listdir(os.path.join(dataset_path, "raw")):
         if fl.endswith("features.pickle"):
             # print(fl)
@@ -78,10 +79,12 @@ def get_dataset_df(agg="mean"):
                 row = np.append(row, pid)
 
                 data_list.append(row)
+                censored_list.append(censored)
                 # print(feature_arr)
                 count+=1
 
     df_features = pd.DataFrame(data_list, columns=columns)
+    df_features["is_censored"] = censored_list  # same rule as dataset.py: 0 = death (event), 1 = censored
     return df_features
 
 
@@ -115,10 +118,7 @@ for agg in aggregator:
     all_data_y =[]
     all_status = []
     for ind, row in df_dataset.iterrows():
-        if dataset_name == "METABRIC":
-            patient_status = True if row["diseasestatus"]!="Living" else False
-        else:
-            patient_status = True if row["Patientstatus"].lower().startswith("death") else False
+        patient_status = row["is_censored"] == 0  # event = death, from the censoring flag
         all_data_y.append((patient_status, float(row["OSmonth"])))
         all_status.append(patient_status)
 

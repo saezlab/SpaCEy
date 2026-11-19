@@ -1,0 +1,30 @@
+{
+ "description": "SpaCEy JacksonFischer survival hyperparameters (GATv2, event = death, protein abundances only, NO input normalisation = --feature_normalise raw).",
+ "hyperparameters": {
+  "model": "GATV2",
+  "aggregators": [
+   "sum",
+   "mean"
+  ],
+  "scalers": [
+   "amplification",
+   "identity"
+  ],
+  "lr": 0.00859522340408541,
+  "weight_decay": 0.007904002582026833,
+  "dropout": 0.15967082413237021,
+  "bs": 64,
+  "gcn_h": 128,
+  "num_of_gcn_layers": 2,
+  "fcl": 128,
+  "num_of_ff_layers": 2,
+  "heads": 1,
+  "use_batch_norm": false,
+  "pooling": "mean_max",
+  "augment": true,
+  "factor": 0.6989982186323638,
+  "patience": 14,
+  "min_lr": 0.0001,
+  "epoch": 200
+ }
+}

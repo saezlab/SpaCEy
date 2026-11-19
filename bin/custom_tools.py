@@ -19,15 +19,10 @@ import pytorch_lightning as pl
 from torch_geometric import utils
 from data_preparation import get_basel_zurich_staining_panel
 from sklearn.model_selection import GroupKFold
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, StratifiedShuffleSplit
 
-# ---------------------------------------------------------------------------
-# NumPy 2.x pickles may reference the private module path `numpy._core.numeric`.
-# Older NumPy releases (<2.0) do not ship this module, which causes a
-# ModuleNotFoundError during unpickling.  Provide a forward-compatible shim so
-# that pickles created with newer NumPy versions remain loadable without
-# forcing an environment-wide upgrade.
-# ---------------------------------------------------------------------------
+# Pickles written with NumPy 2 refer to numpy._core.numeric, which NumPy < 2 does not have:
+# alias it so that they can still be loaded.
 try:
     import numpy._core.numeric  # type: ignore[attr-defined]
 except ModuleNotFoundError:
@@ -261,7 +256,9 @@ def load_model(fileName: str, path =  os.curdir, model_type: str = "NONE", args:
                     deg = deg, # Comes from data not hyperparameter
                     # num_classes = args["num_classes"],
                     heads = args["heads"],
-                    label_type = label_type# args["label"]
+                    label_type = label_type,# args["label"]
+                    use_batch_norm = args.get("use_batch_norm", False),
+                    pooling = args.get("pooling", "mean"),
                         )
 
         model.load_state_dict(torch.load(path_model, map_location=device))
@@ -386,14 +383,14 @@ def general_parser() -> argparse.Namespace:
         type=str,
         default="JacksonFischer",
         metavar='ds',
-        help='dataset name (default: JacksonFischer, alternatives METABRIC, Lung)')
+        help='dataset name (default: JacksonFischer, alternatives METABRIC, Lung, codex_crc, NSCLC[_<setting>])')
     
     parser.add_argument(
         '--model',
         type=str,
-        default="PNAConv",
+        default="GATV2",
         metavar='mn',
-        help='model name (default: PNAConv)')
+        help='model name (default: GATV2)')
 
     parser.add_argument(
         '--lr',
@@ -542,6 +539,14 @@ def general_parser() -> argparse.Namespace:
         help='Perform t_v_t, default: --no-t_v_t (--t_v_t, --no-t_v_t),')
 
     parser.add_argument(
+        '--patient_stratified_tvt',
+        type= bool,
+        action=argparse.BooleanOptionalAction,
+        default= False,
+        metavar='F',
+        help='For t_v_t runs, split train/val/test by patient_id with label stratification, default: --no-patient_stratified_tvt.')
+
+    parser.add_argument(
         '--label',
         type= str,
         default= "OSMonth", # "identity", "amplification", "attenuation", "linear" and "inverse_linear"
@@ -567,6 +572,13 @@ def general_parser() -> argparse.Namespace:
         type= int,
         default= 0, #week, week_lognorm
         help='0, 1')
+
+    parser.add_argument(
+        '--optimization_metric',
+        type=str,
+        default="accuracy",
+        choices=["accuracy", "auprc", "auc", "f1", "precision", "recall"],
+        help='Primary validation metric to optimize for classification runs')
 
 
     args = parser.parse_args()
@@ -920,12 +932,57 @@ def split_by_group(dataset, random_state=42):
 
 
     return list(train.index), list(validation.index), list(test.index)
+
+
+def create_stratified_train_val_test_split_by_pid(dataset, val_size=0.1, test_size=0.1, random_state=42):
+    sample_data = []
+    for idx, data in enumerate(dataset):
+        outcome = int(data.y.item() if hasattr(data.y, "item") else data.y)
+        sample_data.append(
+            {
+                "sample_idx": idx,
+                "patient_id": str(data.p_id),
+                "outcome": outcome,
+            }
+        )
+
+    df = pd.DataFrame(sample_data)
+    patient_outcomes = df.groupby("patient_id")["outcome"].nunique()
+    if (patient_outcomes > 1).any():
+        inconsistent_patients = patient_outcomes[patient_outcomes > 1].index.tolist()
+        raise ValueError(f"Found patients with multiple outcomes: {inconsistent_patients[:10]}")
+
+    patient_df = df.groupby("patient_id")["outcome"].first().reset_index()
+    if not 0 < test_size < 1 or not 0 < val_size < 1 or (val_size + test_size) >= 1:
+        raise ValueError("val_size and test_size must be in (0,1) and sum to less than 1.")
+
+    splitter_test = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    trainval_idx, test_idx = next(splitter_test.split(patient_df["patient_id"], patient_df["outcome"]))
+
+    trainval_patients = patient_df.iloc[trainval_idx].reset_index(drop=True)
+    test_patients = patient_df.iloc[test_idx]["patient_id"].tolist()
+
+    val_within_trainval = val_size / (1.0 - test_size)
+    splitter_val = StratifiedShuffleSplit(n_splits=1, test_size=val_within_trainval, random_state=random_state)
+    train_idx, val_idx = next(splitter_val.split(trainval_patients["patient_id"], trainval_patients["outcome"]))
+
+    train_patients = trainval_patients.iloc[train_idx]["patient_id"].tolist()
+    val_patients = trainval_patients.iloc[val_idx]["patient_id"].tolist()
+
+    train_indices = df[df["patient_id"].isin(train_patients)]["sample_idx"].tolist()
+    val_indices = df[df["patient_id"].isin(val_patients)]["sample_idx"].tolist()
+    test_indices = df[df["patient_id"].isin(test_patients)]["sample_idx"].tolist()
+
+    assert len(set(train_patients) & set(val_patients)) == 0
+    assert len(set(train_patients) & set(test_patients)) == 0
+    assert len(set(val_patients) & set(test_patients)) == 0
+
+    return train_indices, val_indices, test_indices, train_patients, val_patients, test_patients
  
 
 def get_n_fold_split(dataset, dataset_name):
     
     json_fl = load_json(f"../data/{dataset_name}/folds.json")
-    # json_fl = load_json("../models/METABRIC_GATV2_CoxPHLoss_10_fold_gpusaez_14-04-2024/-pEmEqMbmY3nybm13c6U6Q.json")
     # json_fl = load_json("./models/JacksonFischer_Final/jswXq05BE0Bx2c29gNGEMg.json")
     lst_groups = []
     for ind, item in enumerate(dataset):
@@ -1315,6 +1372,70 @@ def create_stratified_cv_folds_lung_dataset_balanced_validation(dataset, clinica
     return samplers
 
 
+def create_stratified_cv_folds_codex_crc_balanced_validation(dataset, clinical_outcome_label, n_folds=5, random_state=42):
+    sample_data = []
+    for idx, data in enumerate(dataset):
+        sample_data.append(
+            {
+                "sample_idx": idx,
+                "sample_id": data.sample_id,
+                "patient_id": data.p_id,
+                "outcome": int(data.y.item() if hasattr(data.y, "item") else data.y),
+            }
+        )
+
+    df = pd.DataFrame(sample_data)
+    patient_outcomes = df.groupby("patient_id")["outcome"].first().reset_index()
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+
+    samplers = []
+    for fold_idx, (train_patient_indices, val_patient_indices) in enumerate(
+        skf.split(patient_outcomes["patient_id"], patient_outcomes["outcome"])
+    ):
+        train_patients = patient_outcomes.iloc[train_patient_indices]["patient_id"].tolist()
+        val_patients = patient_outcomes.iloc[val_patient_indices]["patient_id"].tolist()
+
+        train_sample_indices = df[df["patient_id"].isin(train_patients)]["sample_idx"].tolist()
+        val_sample_indices = df[df["patient_id"].isin(val_patients)]["sample_idx"].tolist()
+
+        train_df = df[df["sample_idx"].isin(train_sample_indices)].copy()
+        class_to_samples = train_df.groupby("outcome")["sample_idx"].apply(list).to_dict()
+        max_class_count = max(len(samples) for samples in class_to_samples.values())
+
+        rng = np.random.default_rng(random_state + fold_idx)
+        resampled_sample_indices = []
+        resampled_outcomes = []
+        for class_val, class_samples in class_to_samples.items():
+            sampled_indices = rng.choice(class_samples, size=max_class_count, replace=True).tolist()
+            resampled_sample_indices.extend(sampled_indices)
+            resampled_outcomes.extend([class_val] * len(sampled_indices))
+
+        val_df = df[df["sample_idx"].isin(val_sample_indices)].copy()
+        val_class_counts = val_df["outcome"].value_counts()
+        min_class_count = val_class_counts.min()
+
+        balanced_val_indices = []
+        for class_val in val_class_counts.index:
+            class_samples = val_df[val_df["outcome"] == class_val]["sample_idx"].tolist()
+            np.random.seed(random_state + fold_idx)
+            selected_samples = np.random.choice(class_samples, min_class_count, replace=False)
+            balanced_val_indices.extend(selected_samples)
+
+        train_sampler = torch.utils.data.SubsetRandomSampler(resampled_sample_indices)
+        val_sampler = torch.utils.data.SubsetRandomSampler(balanced_val_indices)
+        samplers.append((fold_idx, train_sampler, val_sampler, train_patients, val_patients))
+
+        print(f"\nCODEX CRC Fold {fold_idx}:")
+        print(f"  Original training: {len(train_sample_indices)} samples from {len(train_patients)} patients")
+        print(f"  After oversampling: {len(resampled_sample_indices)} samples")
+        print(f"  Original validation: {len(val_sample_indices)} samples from {len(val_patients)} patients")
+        print(f"  Balanced validation: {len(balanced_val_indices)} samples")
+        print(f"  Training class distribution (after oversampling): {pd.Series(resampled_outcomes).value_counts().to_dict()}")
+        print(f"  Validation class distribution (balanced): {df[df['sample_idx'].isin(balanced_val_indices)]['outcome'].value_counts().to_dict()}")
+
+    return samplers
+
+
 def create_stratified_fulldataset_lung_dataset_balanced_validation(dataset, clinical_outcome_label, random_state=42):
     """
     Create an oversampled sampler for the full Lung dataset to balance classes while
@@ -1504,14 +1625,17 @@ def generate_splits(dataset_name):
 def set_seeds(seed=42, deterministic = False):
     pl.seed_everything(seed)
     random.seed(seed)
-    
+
     torch.manual_seed(seed)
-    # 
     np.random.seed(seed)
-    if deterministic:
-        torch.use_deterministic_algorithms(True, warn_only=True)
-        torch.backends.cudnn.deterministic = True
+
+    if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    torch.use_deterministic_algorithms(bool(deterministic), warn_only=True)
+    torch.backends.cudnn.deterministic = bool(deterministic)
+    torch.backends.cudnn.benchmark = not bool(deterministic)
         
 
 import numpy as np
@@ -1537,3 +1661,36 @@ def create_hyperparameter_combinations(hyperparams):
     combinations_dicts = [dict(zip(keys, combo)) for combo in combinations]
     
     return combinations_dicts
+
+
+# Survival cross-validation
+
+def survival_metadata(dataset) -> pd.DataFrame:
+    """One row per graph: dataset index, image id, patient id and censoring flag (1 = censored/alive)."""
+    return pd.DataFrame([(i, str(d.img_id), str(d.p_id), int(d.is_censored)) for i, d in enumerate(dataset)],
+                        columns=["idx", "img_id", "p_id", "is_censored"])
+
+
+def load_folds_json(path, meta: pd.DataFrame) -> dict:
+    """Folds from a split file (fold_img_id_dict: fold_k = [train image ids, test image ids]) as
+    {k: (train dataset indices, test dataset indices)}."""
+    fold_img_ids = json.loads(Path(path).read_text())["fold_img_id_dict"]
+    img_to_idx = dict(zip(meta.img_id, meta.idx))
+    return {int(name.split("_")[1]): ([img_to_idx[i] for i in train], [img_to_idx[i] for i in test])
+            for name, (train, test) in fold_img_ids.items()}
+
+
+def inner_patient_split(meta: pd.DataFrame, train_idx, frac: float, seed: int):
+    """Patient-grouped split of the training images (a fraction frac of the patients for validation),
+    stratified by patient censoring status."""
+    sub = meta.set_index("idx").loc[train_idx]
+    patients = sub.groupby("p_id")["is_censored"].first()
+    rng = np.random.default_rng(seed)
+    val_patients = set()
+    for _, group in patients.groupby(patients):
+        ids = group.index.to_numpy()
+        rng.shuffle(ids)
+        val_patients.update(ids[: int(round(frac * len(ids)))])
+    inner_val = [i for i in train_idx if meta.at[i, "p_id"] in val_patients]
+    inner_train = [i for i in train_idx if meta.at[i, "p_id"] not in val_patients]
+    return inner_train, inner_val

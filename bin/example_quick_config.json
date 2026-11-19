@@ -1,33 +1,31 @@
 {
-  "marker_counts": [
-    10,
-    50
+ "description": "Example SpaCEy survival config with illustrative hyperparameters (not tuned for any dataset). Pass it with --params_json; its 'hyperparameters' override the command-line hyperparameters.",
+ "run": "cd bin; python train_test_controller.py --dataset_name <DATASET> --en quick_start --folds_json <FOLDS_JSON> --params_json example_quick_config.json [--cv_setting heldout]",
+ "hyperparameters": {
+  "model": "GATV2",
+  "num_of_gcn_layers": 2,
+  "num_of_ff_layers": 1,
+  "gcn_h": 64,
+  "fcl": 128,
+  "heads": 2,
+  "dropout": 0.2,
+  "use_batch_norm": false,
+  "pooling": "mean",
+  "aggregators": [
+   "sum",
+   "mean"
   ],
-  "sample_counts": [
-    50,
-    100
+  "scalers": [
+   "amplification",
+   "identity"
   ],
-  "epochs_per_config": 3,
-  "model_config": {
-    "model_type": "GATV2",
-    "num_gcn_layers": 2,
-    "num_ff_layers": 2,
-    "gcn_hidden_neurons": 32,
-    "ff_hidden_neurons": 64,
-    "dropout": 0.2,
-    "heads": 2
-  },
-  "training_config": {
-    "learning_rate": 0.001,
-    "weight_decay": 1e-05,
-    "batch_size": 16,
-    "loss_function": "MSE"
-  },
-  "synthetic_data_config": {
-    "num_nodes_per_sample": 50,
-    "edge_probability": 0.1,
-    "feature_noise": 0.1,
-    "label_noise": 0.05
-  },
-  "random_seed": 42
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "bs": 32,
+  "epoch": 100,
+  "factor": 0.5,
+  "patience": 5,
+  "min_lr": 1e-05,
+  "augment": false
+ }
 }

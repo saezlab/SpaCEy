@@ -5,7 +5,7 @@ import sys
 from torch.nn import Linear
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATConv, TransformerConv, GINConv, PNAConv, GATv2Conv
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_mean_pool, global_max_pool
 from torch.nn import BatchNorm1d
 from torch.nn import ModuleList
 import pytorch_lightning as pl
@@ -34,7 +34,7 @@ class CustomGCN(torch.nn.Module):
             KeyError: Not proper arguments, miss matching types
         """
         super(CustomGCN, self).__init__()
-        pl.seed_everything(SEED)
+        # Seeding is left to the caller (custom_tools.set_seeds); re-seeding here made every
 
         # Recording the parameters
         self.pars = kwargs
@@ -67,6 +67,14 @@ class CustomGCN(torch.nn.Module):
         self.scalers = self.check_Key("scalers","list")
         self.heads = self.check_Key("heads")
         self.deg = self.check_Key("deg")
+        # Optional: batch normalisation after each graph layer, and mean+max pooling instead of mean.
+        self.use_batch_norm = bool(self.pars.get("use_batch_norm", False))
+        self.pooling = self.pars.get("pooling", "mean")
+        # Optional edge features (e.g. cell-cell distance) for the GATv2 attention.
+        self.edge_dim = self.pars.get("edge_dim", None)
+        if self.pooling not in ("mean", "mean_max"):
+            raise ValueError("pooling must be 'mean' or 'mean_max'")
+        pool_factor = 2 if self.pooling == "mean_max" else 1
     
 
         if self.label_type == "regression":
@@ -100,6 +108,9 @@ class CustomGCN(torch.nn.Module):
                 self.GCN_type_1 = GATv2Conv
                 model_pars_head["heads"] = self.heads
                 model_pars_rest["heads"] = self.heads
+                if self.edge_dim:
+                    model_pars_head["edge_dim"] = self.edge_dim
+                    model_pars_rest["edge_dim"] = self.edge_dim
                 model_pars_rest["in_channels"] = self.gcn_hidden_neurons*self.heads
             
             # WORKS
@@ -148,18 +159,18 @@ class CustomGCN(torch.nn.Module):
                 **model_pars_head,
             ))
 
-            self.batch_norms.append(BatchNorm1d(self.gcn_hidden_neurons))
+            self.batch_norms.append(BatchNorm1d(self.gcn_hidden_neurons*(self.heads if self.use_batch_norm else 1)))
             
             for _ in range(self.num_gcn_layers-1):
                 self.convs.append(self.GCN_type_1(
                     **model_pars_rest,
                     ))
-                self.batch_norms.append(BatchNorm1d(self.gcn_hidden_neurons))
+                self.batch_norms.append(BatchNorm1d(self.gcn_hidden_neurons*(self.heads if self.use_batch_norm else 1)))
 
             if self.num_ff_layers != 0:
                 
                 # Initial ff layer ----
-                self.ff_layers.append(Linear(self.gcn_hidden_neurons*self.heads, self.ff_hidden_neurons))
+                self.ff_layers.append(Linear(self.gcn_hidden_neurons*self.heads*pool_factor, self.ff_hidden_neurons))
                 self.ff_batch_norms.append(BatchNorm1d(self.ff_hidden_neurons))
                 # Other ff layers
                 for _ in range(self.num_ff_layers-2):
@@ -186,7 +197,7 @@ class CustomGCN(torch.nn.Module):
             
             if self.num_ff_layers != 0:
                 # Initial ff layer ----
-                self.ff_layers.append(Linear(self.gcn_hidden_neurons, self.ff_hidden_neurons))
+                self.ff_layers.append(Linear(self.gcn_hidden_neurons*pool_factor, self.ff_hidden_neurons))
                 self.ff_batch_norms.append(BatchNorm1d(self.ff_hidden_neurons))
                 # Other ff layers
                 for _ in range(self.num_ff_layers-2):
@@ -222,7 +233,7 @@ class CustomGCN(torch.nn.Module):
         return value
 
 
-    def forward(self, x, edge_index, batch=torch.tensor([1]), att=False):
+    def forward(self, x, edge_index, batch=torch.tensor([1]), att=False, edge_attr=None):
         # print("X",x.isna, x)
         
         if self.type == 'GATConv' and att is True:
@@ -249,12 +260,11 @@ class CustomGCN(torch.nn.Module):
         else:
             # Conv layers
             
-            for conv in self.convs:
-                # x = conv(x, edge_index)
-                # print("X",x)  
-                x = F.relu(conv(x, edge_index))
-                
-                
+            for i, conv in enumerate(self.convs):
+                x = conv(x, edge_index, edge_attr=edge_attr) if self.edge_dim else conv(x, edge_index)
+                if self.use_batch_norm:
+                    x = self.batch_norms[i](x)
+                x = F.relu(x)
                 x = F.dropout(x, self.dropout, training=self.training)
                 
             # Check for NaNs
@@ -264,11 +274,17 @@ class CustomGCN(torch.nn.Module):
 
             
             # Convulution Result Aggregation
-            x = global_mean_pool(x, batch)  # [batch_size, gcn_hidden_neurons]
+            if self.pooling == "mean_max":
+                x = torch.cat([global_mean_pool(x, batch), global_max_pool(x, batch)], dim=1)
+            else:
+                x = global_mean_pool(x, batch)  # [batch_size, gcn_hidden_neurons]
             
             # Classification according to ppoling
-            for ff_l in self.ff_layers[:-1]:
-                x = F.relu(ff_l(x))
+            for i, ff_l in enumerate(self.ff_layers[:-1]):
+                x = ff_l(x)
+                if self.use_batch_norm:
+                    x = self.ff_batch_norms[i](x)
+                x = F.relu(x)
                 # x = h + x  # residual#
                 x = F.dropout(x, self.dropout, training=self.training)
             x = self.ff_layers[-1](x)

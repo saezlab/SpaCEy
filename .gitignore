@@ -27,9 +27,6 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-bin/legacy_code
-bin/
-bin/*.md
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -53,6 +50,8 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.codex/
+.agents/
 cover/
 
 # Translations
@@ -141,39 +140,70 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# logs created by scripts
-logs/
+# SpaCEy project
+# Data, trained models and outputs (repository root only)
+/data/*
+# except the JacksonFischer folds and hyperparameters needed to reproduce the results
+!/data/JacksonFischer/
+/data/JacksonFischer/*
+!/data/JacksonFischer/folds_jacksonfischer.json
+!/data/JacksonFischer/hyperparams_jacksonfischer.json
+/raw/
+/models/
+/results/
+/plots/
+/logs/
+/sketches/
 
-# ignore large data folders
-data/
-data
-models
-results
-plots
-# sketches
-sketches/
-sketches/*
+# Analysis scripts and documentation are kept out of the repository
+/analysis/
+/docs/
 
-# .DS_Store
+# Generated files and scratch space under bin/
+/bin/data/
+/bin/datasets/
+/bin/processed/
+/bin/jobs/
+/bin/checkpoints/
+/bin/checkpoint.pt
+/bin/to_be_ignored/
+
+# Output of tests/test_runtime_simulation.py
+/test_runtime_output/
+
+# Hyperparameter-search scripts
+optuna*
+
+# Local files
 .DS_Store
- ../.DS_Store
-
-plots/
-
-bin/jobs
-
-bin/checkpoints
-bin/data
-bin/datasets
-data/models
-data/
-
-models/
-bin/processed/
-raw/
-logs
-results/
-bin/checkpoint.pt
 docker.commands
-bin/to_be_ignored/
-bin/to_be_ignored/*
+/legacy_052026/
+tests/test_codex_crc_pipeline.py
+
+# Nix
+result
+result-*
+.direnv/
+
+# Local, per-user settings (e.g. .claude/settings.local.json)
+*.local.json
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*~
+
+# Tooling caches
+.ruff_cache/
+
+# Claude Code local notes (settings covered by *.local.json)
+CLAUDE.local.md
+
+# Cluster job logs
+slurm-*.out
+slurm-*.err
+nohup.out
+*.pt
+*.pth
+*.ckpt

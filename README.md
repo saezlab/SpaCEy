@@ -4,181 +4,81 @@ Discovery of functional motifs by association to clinical features using Graph N
 
 ## Installation
 
-### Using Conda (Recommended)
-
-The project includes conda environment files. To set up the environment:
+We use conda. The environment file below has the versions we tested (Python 3.11, PyTorch 2.1.1 with CUDA 12.1,
+PyTorch Geometric 2.4.0):
 
 ```bash
-# Create environment from the provided yml file
 conda env create -f pygem_environment.yml
-
-# Activate the environment
 conda activate py_gem_3
 ```
 
-Alternatively, you can use the GPU-enabled environment:
+Training needs a GPU; it stops with an error if PyTorch cannot see one. On NixOS, PyTorch only finds the
+driver when you set:
 
 ```bash
-conda env create -f environment.yml
-conda activate py_gem_gpu
+export LD_LIBRARY_PATH=/run/opengl-driver/lib
 ```
 
-### Using Pip
+## Data
 
-Install the required packages manually:
+Each dataset lives in `data/<dataset>/`.
+
+### Main options
+
+| Option | What it does | Default |
+|---|---|---|
+| `--dataset_name` | `JacksonFischer` or `METABRIC` | `JacksonFischer` |
+| `--en` | experiment name, used for the output folders | `test_experiment` |
+| `--folds_json` | the folds file (required, except with `--full_training`) | |
+| `--full_training` | train one model on all patients instead of cross-validating, for example to explain it afterwards. The number of epochs is chosen on 20% of the patients, then the model is retrained on everyone. Saves `models/<en>/<session>_SD.mdl` and `<session>.json` | off |
+| `--params_json` | hyperparameter file; its values replace the ones given on the command line | |
+| `--cv_setting` | `nfold` or `heldout` (see above) | `nfold` |
+| `--feature_normalise` | `raw`: use the protein abundances as they are; `log1p_z`: log-transform them and scale them with the training-fold mean and SD | `raw` |
+| `--seed` | fold *k* is trained with seed `seed + k` | `42` |
+| `--gpu_id` | which GPU to use | `0` |
+
+### Hyperparameters
+
+You can set these on the command line, but usually they come from the hyperparameter file.
+
+| Hyperparameter | Meaning | Default |
+|---|---|---|
+| `model` | graph layer type: `GATV2`, `GATConv`, `PNAConv`, `TransformerConv` or `GINConv` | `GATV2` |
+| `num_of_gcn_layers` | number of graph layers | 2 |
+| `gcn_h` | size of each graph layer | 128 |
+| `heads` | attention heads (GAT layers only) | 1 |
+| `num_of_ff_layers` | number of fully connected layers after the graph layers | 2 |
+| `fcl` | size of the fully connected layers | 128 |
+| `dropout` | dropout rate | 0.2 |
+| `lr` | learning rate | 0.01 |
+| `weight_decay` | L2 penalty | 0.001 |
+| `bs` | batch size (images) | 32 |
+| `epoch` | maximum number of epochs | 5 |
+| `factor`, `patience`, `min_lr` | the learning rate is multiplied by `factor` after `patience` epochs without improvement, down to `min_lr`. Training stops after 2 × `patience` epochs without improvement | 0.5, 5, 0.00002 |
+| `aggregators`, `scalers` | aggregation settings for `PNAConv` | `sum mean`, `amplification identity` |
+| `use_batch_norm` | batch normalisation after each graph layer (file only) | false |
+| `pooling` | how cells are summarised into one image vector: `mean` or `mean_max` (file only) | `mean` |
+| `augment` | randomly perturb the graphs during training (`--augment` on the command line) | false |
+| `min_epochs` | smallest epoch that can be kept (`--min_epochs`) | 0 |
+
+
+
+### Using another GPU
+
+To train on a second GPU, make only that card visible and keep `--gpu_id 0`:
 
 ```bash
-pip install torch torch-geometric pytorch-lightning numpy pandas scikit-learn matplotlib seaborn scanpy networkx
+CUDA_VISIBLE_DEVICES=1 python train_test_controller.py ... --gpu_id 0
 ```
 
-### Key Dependencies
+## Classification
 
-- Python 3.9+ or 3.11+
-- PyTorch (>= 2.1.0)
-- PyTorch Geometric (>= 2.4.0)
-- PyTorch Lightning (>= 2.1.0)
-- NumPy, Pandas, Scikit-learn
-- Scanpy (for single-cell analysis)
-- NetworkX (for graph operations)
-
-## Training and Testing
-
-The `bin/train_test_controller.py` script handles training and testing of GNN models for regression tasks. The script:
-
-- Sets up experiment directories (results, plots, models)
-- Configures loss functions (MSE, Huber, CoxPHLoss, NegativeLogLikelihood)
-- Handles train/validation/test splits or cross-validation
-- Uses PyTorch Lightning for training
-- Saves models, results, and plots automatically
-
-### Basic Usage
+Classification tasks (for example tumour grade) use a separate script with its own options:
 
 ```bash
-cd bin
-python train_test_controller.py [arguments]
-```
-
-### Training PNA Model For Regression
-
-```bash
-python bin/train_test_controller.py \
-    --aggregators 'max' \
-    --bs 16 \
-    --dropout 0.0 \
-    --en my_experiment \
-    --epoch 200 \
-    --factor 0.8 \
-    --fcl 256 \
-    --gcn_h 64 \
-    --lr 0.001 \
-    --min_lr 0.0001 \
-    --model PNAConv \
-    --num_of_ff_layers 1 \
-    --num_of_gcn_layers 2 \
-    --patience 5 \
-    --scalers 'identity' \
-    --weight_decay 1e-05 \
-    --loss MSE \
-    --label OSMonth
-```
-
-### Training GAT Model For Regression
-
-```bash
-python bin/train_test_controller.py \
-    --aggregators None \
-    --bs 16 \
-    --dropout 0.0 \
-    --en my_experiment \
-    --epoch 200 \
-    --factor 0.2 \
-    --fcl 128 \
-    --gcn_h 64 \
-    --lr 0.001 \
-    --min_lr 2e-05 \
-    --model GATConv \
-    --num_of_ff_layers 1 \
-    --num_of_gcn_layers 3 \
-    --patience 20 \
-    --scalers None \
-    --weight_decay 0 \
-    --loss MSE \
-    --label OSMonth
-```
-
-### Key Features
-
-- **Loss Functions**: Supports MSE, Huber, CoxPHLoss, and NegativeLogLikelihood
-- **Models**: PNAConv, GATConv, GATv2Conv, and other PyTorch Geometric models
-- **Cross-validation**: Use `--fold` flag for k-fold cross-validation
-- **Experiment Tracking**: Results are saved with unique session IDs
-- **Automatic Directory Creation**: Creates `results/`, `plots/`, and `models/` directories
-
-
-## Hyperparameter Optimization with Optuna
-
-You can run distributed hyperparameter optimization using Optuna. For tumor grade classification:
-
-```bash
-python bin/optuna_hpo_tumor_grade.py --n_trials 50 --n_jobs 1
-```
-
-- For SLURM clusters, launch multiple jobs with the same study name and storage backend (see Optuna docs for details).
-
-## Main Hyperparameters
-
-### Regression (train_test_controller.py)
-
-| Argument         | Description                                      | Example Value      |
-|------------------|--------------------------------------------------|--------------------|
-| `--model`        | GNN model type (`PNAConv`, `GATConv`, `GATv2Conv`, etc.) | `PNAConv`        |
-| `--label`        | Target label for regression (`OSMonth`, etc.)   | `OSMonth`          |
-| `--loss`         | Loss function (`MSE`, `Huber`, `CoxPHLoss`, `NegativeLogLikelihood`) | `MSE` |
-| `--bs`           | Batch size                                       | `16`               |
-| `--epoch`        | Number of training epochs                        | `200`              |
-| `--lr`           | Learning rate                                    | `0.001`            |
-| `--min_lr`       | Minimum learning rate                            | `0.0001`           |
-| `--factor`       | Learning rate reduction factor                   | `0.8`              |
-| `--patience`     | Patience for learning rate scheduling            | `5`                |
-| `--dropout`      | Dropout rate                                     | `0.0`              |
-| `--fcl`          | Fully connected layer size                        | `256`              |
-| `--gcn_h`        | GNN hidden layer size                            | `64`               |
-| `--num_of_gcn_layers` | Number of GNN layers                         | `2`                |
-| `--num_of_ff_layers`  | Number of fully connected layers              | `1`                |
-| `--weight_decay` | L2 regularization weight                         | `1e-5`             |
-| `--aggregators`  | Aggregators for PNAConv (`sum`, `mean`, `max`, `min`, `var`, `std`) | `'max'` |
-| `--scalers`      | Scalers for PNAConv (`identity`, `amplification`, `attenuation`, etc.) | `'identity'` |
-| `--heads`        | Number of attention heads (for GAT models)       | `1`                |
-| `--dataset_name` | Dataset name (`JacksonFischer`, `METABRIC`, `Lung`) | `JacksonFischer` |
-| `--fold`         | Use k-fold cross-validation (`--fold` or `--no-fold`) | `--fold` |
-| `--en`           | Experiment name                                  | `my_experiment`    |
-| `--gpu_id`       | GPU ID to use (0, 1, etc.)                       | `0`                |
-
-### Classification (train_test_controller_classification.py)
-
-| Argument         | Description                                      | Example Value      |
-|------------------|--------------------------------------------------|--------------------|
-| `--label`        | Target label (`tumor_grade`, `Relapse`, etc.)    | `tumor_grade`      |
-| `--model`        | GNN model type (`GATv2Conv`, `PNAConv`, etc.)    | `GATv2Conv`        |
-| `--bs`           | Batch size                                       | `16`               |
-| `--epoch`        | Number of training epochs                        | `100`              |
-| `--lr`           | Learning rate                                    | `0.001`            |
-| `--dropout`      | Dropout rate                                     | `0.2`              |
-| `--fcl`          | Fully connected layer size                        | `128`              |
-| `--gcn_h`        | GNN hidden layer size                            | `64`               |
-| `--num_of_gcn_layers` | Number of GNN layers                         | `2`                |
-| `--num_of_ff_layers`  | Number of fully connected layers              | `1`                |
-| `--weight_decay` | L2 regularization weight                         | `1e-5`             |
-| `--en`           | Experiment name                                  | `TumorGradeExp`    |
-
-For a full list of arguments, run:
-```bash
-# For regression
-python bin/train_test_controller.py --help
-
-# For classification
 python bin/train_test_controller_classification.py --help
 ```
 
+## License
 
-
+GNU General Public License v3.0, see [LICENSE](LICENSE).
