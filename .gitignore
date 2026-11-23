@@ -143,11 +143,15 @@ cython_debug/
 # SpaCEy project
 # Data, trained models and outputs (repository root only)
 /data/*
-# except the JacksonFischer folds and hyperparameters needed to reproduce the results
+# except the JacksonFischer and METABRIC folds and hyperparameters needed to reproduce the results
 !/data/JacksonFischer/
 /data/JacksonFischer/*
 !/data/JacksonFischer/folds_jacksonfischer.json
 !/data/JacksonFischer/hyperparams_jacksonfischer.json
+!/data/METABRIC/
+/data/METABRIC/*
+!/data/METABRIC/folds_metabric.json
+!/data/METABRIC/hyperparams_metabric.json
 /raw/
 /models/
 /results/

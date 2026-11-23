@@ -1,0 +1,30 @@
+{
+ "description": "SpaCEy METABRIC survival hyperparameters",
+ "hyperparameters": {
+  "model": "GATV2",
+  "aggregators": [
+   "sum",
+   "mean"
+  ],
+  "scalers": [
+   "amplification",
+   "identity"
+  ],
+  "lr": 0.006625909878549228,
+  "weight_decay": 5.448777754726926e-06,
+  "dropout": 0.13293995444259085,
+  "bs": 16,
+  "gcn_h": 128,
+  "num_of_gcn_layers": 2,
+  "fcl": 64,
+  "num_of_ff_layers": 1,
+  "heads": 2,
+  "use_batch_norm": true,
+  "pooling": "mean",
+  "augment": false,
+  "factor": 0.3241574532118033,
+  "patience": 15,
+  "min_lr": 1e-05,
+  "epoch": 100
+ }
+}
